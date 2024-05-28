@@ -157,5 +157,5 @@ func TestInfo(t *testing.T) {
 	n, err := conn.Read(buf)
 	assert.Nil(t, err)
 
-	assert.Equal(t, "*2\r\n$11\r\nReplication\r\n$11\r\nrole:master\r\n", string(buf[:n]))
+	assert.Equal(t, "$11\r\nReplication\r\nrole:master\r\n", string(buf[:n]))
 }

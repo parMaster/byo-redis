@@ -130,7 +130,7 @@ func (s *Server) handleConnection(connection net.Conn) error {
 				info := []string{}
 				info = append(info, "Replication")
 				info = append(info, "role:master")
-				connection.Write([]byte(s.makeArray(info)))
+				connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
 			default:
 				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 			}
