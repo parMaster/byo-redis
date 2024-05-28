@@ -23,6 +23,21 @@ func Test_Ping(t *testing.T) {
 	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
 }
 
+func Test_Echo(t *testing.T) {
+
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	_, err = conn.Write([]byte("*2\r\n$4\r\nECHO\r\n$3\r\nhee\r\n"))
+	assert.Nil(t, err)
+
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "$3\r\nhey\r\n", string(buf[:n]))
+}
+
 // MockConn is a mock implementation of the net.Conn interface
 type MockConn struct {
 	buff string
@@ -87,7 +102,9 @@ func Test_handleConnection(t *testing.T) {
 
 	assert.Equal(t, "*1\r\n$4\r\nPING\r\n", mockConn.buff)
 
-	handleConnection(mockConn)
+	server := NewServer("0.0.0.0:6379")
+	server.conn = mockConn
+	server.handleConnection()
 
 	buf := make([]byte, 1024)
 	n, err := mockConn.Read(buf)
@@ -109,7 +126,9 @@ func Test_doublePing(t *testing.T) {
 	assert.Equal(t, "*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n", mockConn.buff)
 	mockConn.acc = ""
 
-	handleConnection(mockConn)
+	server := NewServer("0.0.0.0:6379")
+	server.conn = mockConn
+	server.handleConnection()
 
 	buf := make([]byte, 1024)
 	n, err := mockConn.Read(buf)

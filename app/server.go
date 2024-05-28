@@ -3,54 +3,165 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
 )
 
-func main() {
-	fmt.Println("Logs from your program will appear here!")
+type Server struct {
+	Addr string
+	conn net.Conn
+}
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+func NewServer(addr string) *Server {
+	return &Server{
+		Addr: addr,
+	}
+}
+
+func (s *Server) ListenAndServe() error {
+	l, err := net.Listen("tcp", s.Addr)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
-		os.Exit(1)
+		return err
 	}
 	for {
-		connection, err := l.Accept()
+		s.conn, err = l.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			return err
 		}
 
-		go handleConnection(connection)
+		go s.handleConnection()
+	}
+}
+
+func main() {
+	s := NewServer("0.0.0.0:6379")
+	err := s.ListenAndServe()
+	if err != nil {
+		fmt.Println("Error starting server: ", err)
+		os.Exit(1)
+	}
+}
+
+// Response Data types
+const (
+	SimpleString = '+'
+	SimpleError  = '-'
+	Integer      = ':'
+	BulkString   = '$'
+	Array        = '*'
+)
+
+func (s *Server) Close() {
+	s.conn.Close()
+}
+
+func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error) {
+	result := []string{}
+	// Parse the header to get the number of elements in the array
+	arrLen := 0
+	fmt.Sscanf(header, "*%d", &arrLen)
+	log.Println("Array length parsed: ", arrLen)
+	// Parse the elements
+	// reader := bufio.NewReader(s.conn)
+
+	for i := 0; i < arrLen; i++ {
+		// Read the header of the element ($<element length>)
+		data, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		data = strings.Trim(data, "\r\n")
+		elementLen := 0
+		fmt.Sscanf(data, "$%d", &elementLen)
+
+		// Read the element data
+		data, err = reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		data = strings.Trim(data, "\r\n")
+
+		if len(data) != elementLen {
+			return nil, fmt.Errorf("error reading element: expected %d bytes, got %d", elementLen, len(data))
+		}
+
+		result = append(result, data)
 	}
 
+	return result, nil
+}
+
+func (s *Server) makeSimpleString(data string) string {
+	return fmt.Sprintf("+%s\r\n", data)
+}
+
+func (s *Server) makeBulkString(data string) string {
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(data), data)
+}
+
+func (s *Server) makeArray(arr []string) string {
+	result := fmt.Sprintf("*%d\r\n", len(arr))
+	for _, v := range arr {
+		result += s.makeBulkString(v)
+	}
+	return result
 }
 
 // handleConnection will read data from the connection
-func handleConnection(conn net.Conn) {
-	reader := bufio.NewReader(conn)
+func (s *Server) handleConnection() error {
+	reader := bufio.NewReader(s.conn)
 
 	stop := 0
 	for stop < 20 {
 		stop++
 		data, err := reader.ReadString('\n')
 		if err != nil {
-			conn.Close()
-			return
+			if err.Error() == "EOF" {
+				fmt.Println("Connection closed")
+				s.Close()
+				return nil
+			} else {
+				err = fmt.Errorf("error reading data: %w", err)
+				log.Println(err)
+				return err
+			}
 		}
 
-		fmt.Println("Received data: ", data)
+		switch data[0] {
+		case SimpleString:
+			fmt.Println("SimpleString: ", data)
+		case SimpleError:
+			fmt.Println("SimpleError: ", data)
+		case Integer:
+			fmt.Println("Integer: ", data)
+		case BulkString:
+			fmt.Println("BulkString: ", data)
+		case Array:
+			fmt.Println("Array: ", data)
+			a, err := s.readArray(data, reader)
+			if err != nil {
+				log.Println("Error reading array: ", err)
+			}
+			log.Println("Array: ", a)
 
-		if strings.Contains(data, "ECHO") {
-			conn.Write([]byte(fmt.Sprintf("Received data: %s\r\n", data)))
+			if len(a) == 0 {
+				continue
+			}
+			switch strings.ToUpper(a[0]) {
+			case "PING":
+				s.conn.Write([]byte(s.makeSimpleString("PONG")))
+			case "ECHO":
+				if len(a) != 2 {
+					s.conn.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
+					continue
+				}
+				s.conn.Write([]byte(s.makeBulkString(a[1])))
+			}
 		}
 
-		if strings.Contains(data, "PING") {
-			conn.Write([]byte("+PONG\r\n"))
-		}
-
+		// fmt.Println("Received data: ", data)
 	}
-
+	return nil
 }
