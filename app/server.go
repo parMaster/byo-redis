@@ -7,15 +7,21 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/parMaster/mcache"
 )
 
 type Server struct {
-	Addr string
+	Addr    string
+	storage *mcache.Cache[string]
 }
 
 func NewServer(addr string) *Server {
+	store := mcache.NewCache[string]()
+
 	return &Server{
-		Addr: addr,
+		Addr:    addr,
+		storage: store,
 	}
 }
 
@@ -89,15 +95,22 @@ func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error
 }
 
 func (s *Server) makeSimpleString(data string) string {
-	return fmt.Sprintf("+%s\r\n", data)
+	return fmt.Sprintf("%c%s\r\n", SimpleString, data)
 }
 
 func (s *Server) makeBulkString(data string) string {
-	return fmt.Sprintf("$%d\r\n%s\r\n", len(data), data)
+	if data == "" {
+		return "$0\r\n\r\n"
+	}
+	return fmt.Sprintf("%c%d\r\n%s\r\n", BulkString, len(data), data)
+}
+
+func (s *Server) nullBulkString() string {
+	return "$-1\r\n"
 }
 
 func (s *Server) makeArray(arr []string) string {
-	result := fmt.Sprintf("*%d\r\n", len(arr))
+	result := fmt.Sprintf("%c%d\r\n", Array, len(arr))
 	for _, v := range arr {
 		result += s.makeBulkString(v)
 	}
@@ -153,6 +166,28 @@ func (s *Server) handleConnection(connection net.Conn) error {
 					continue
 				}
 				connection.Write([]byte(s.makeBulkString(a[1])))
+			case "SET":
+				if len(a) != 3 {
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'set' command")))
+					continue
+				}
+
+				s.storage.Set(a[1], a[2], 0)
+
+				connection.Write([]byte(s.makeSimpleString("OK")))
+			case "GET":
+				if len(a) != 2 {
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'get' command")))
+					continue
+				}
+				value, err := s.storage.Get(a[1])
+				if err != nil {
+					connection.Write([]byte(s.nullBulkString()))
+					continue
+				}
+				connection.Write([]byte(s.makeBulkString(value)))
+			default:
+				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 			}
 		}
 

@@ -86,6 +86,30 @@ func Test_Echo(t *testing.T) {
 	assert.Equal(t, "$3\r\nhey\r\n", string(buf[:n]))
 }
 
+func Test_SetGet(t *testing.T) {
+
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	_, err = conn.Write([]byte("*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"))
+	assert.Nil(t, err)
+
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "+OK\r\n", string(buf[:n]))
+
+	_, err = conn.Write([]byte("*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n"))
+	assert.Nil(t, err)
+
+	buf = make([]byte, 1024)
+	n, err = conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "$3\r\nbar\r\n", string(buf[:n]))
+}
+
 // MockConn is a mock implementation of the net.Conn interface
 type MockConn struct {
 	buff string
