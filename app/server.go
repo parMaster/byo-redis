@@ -126,6 +126,11 @@ func (s *Server) handleConnection(connection net.Conn) error {
 					continue
 				}
 				connection.Write([]byte(s.makeBulkString(value)))
+			case "INFO":
+				info := []string{}
+				info = append(info, "Replication")
+				info = append(info, "role:master")
+				connection.Write([]byte(s.makeArray(info)))
 			default:
 				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 			}
@@ -189,10 +194,10 @@ func (s *Server) nullBulkString() string {
 	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
-// func (s *Server) makeArray(arr []string) string {
-// 	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
-// 	for _, v := range arr {
-// 		result += s.makeBulkString(v)
-// 	}
-// 	return result
-// }
+func (s *Server) makeArray(arr []string) string {
+	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
+	for _, v := range arr {
+		result += s.makeBulkString(v)
+	}
+	return result
+}

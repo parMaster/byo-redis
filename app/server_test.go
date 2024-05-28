@@ -144,3 +144,18 @@ func TestWithExpiration(t *testing.T) {
 
 	assert.Equal(t, "$-1\r\n", string(buf[:n]))
 }
+
+func TestInfo(t *testing.T) {
+
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	_, err = conn.Write([]byte("*1\r\n$4\r\nINFO\r\n"))
+	assert.Nil(t, err)
+
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "*2\r\n$11\r\nReplication\r\n$11\r\nrole:master\r\n", string(buf[:n]))
+}
