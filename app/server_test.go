@@ -159,3 +159,19 @@ func TestInfo(t *testing.T) {
 
 	assert.Equal(t, "$11\r\nReplication\r\nrole:master\r\n", string(buf[:n]))
 }
+
+func TestInfoSlave(t *testing.T) {
+
+	s := NewServer("0.0.0.0:6389")
+
+	info := s.getInfo()
+	assert.Equal(t, "Replication", info[0])
+	assert.Equal(t, "role:master", info[1])
+
+	s.AsSlaveOf("0.0.0.0:6379")
+
+	info = s.getInfo()
+
+	assert.Equal(t, "Replication", info[0])
+	assert.Equal(t, "role:slave", info[1])
+}

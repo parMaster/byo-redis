@@ -12,9 +12,16 @@ import (
 	"github.com/parMaster/mcache"
 )
 
+// Server roles
+const (
+	RoleMaster = "master"
+	RoleSlave  = "slave"
+)
+
 type Server struct {
 	Addr    string
 	storage *mcache.Cache[string]
+	role    string
 }
 
 func NewServer(addr string) *Server {
@@ -23,7 +30,12 @@ func NewServer(addr string) *Server {
 	return &Server{
 		Addr:    addr,
 		storage: store,
+		role:    RoleMaster,
 	}
+}
+
+func (s *Server) AsSlaveOf(masterAddr string) {
+	s.role = RoleSlave
 }
 
 func (s *Server) ListenAndServe() error {
@@ -127,15 +139,20 @@ func (s *Server) handleConnection(connection net.Conn) error {
 				}
 				connection.Write([]byte(s.makeBulkString(value)))
 			case "INFO":
-				info := []string{}
-				info = append(info, "Replication")
-				info = append(info, "role:master")
+				info := s.getInfo()
 				connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
 			default:
 				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 			}
 		}
 	}
+}
+
+func (s Server) getInfo() []string {
+	info := []string{}
+	info = append(info, "Replication")
+	info = append(info, "role:"+s.role)
+	return info
 }
 
 func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
@@ -194,10 +211,10 @@ func (s *Server) nullBulkString() string {
 	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
-func (s *Server) makeArray(arr []string) string {
-	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
-	for _, v := range arr {
-		result += s.makeBulkString(v)
-	}
-	return result
-}
+// func (s *Server) makeArray(arr []string) string {
+// 	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
+// 	for _, v := range arr {
+// 		result += s.makeBulkString(v)
+// 	}
+// 	return result
+// }
