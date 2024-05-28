@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-pkgz/lgr"
+	"github.com/jessevdk/go-flags"
 	"github.com/parMaster/mcache"
 )
 
@@ -42,11 +44,30 @@ func (s *Server) ListenAndServe() error {
 	}
 }
 
+var Options struct {
+	Port int `long:"port" short:"p" env:"PORT" description:"redis port" default:"6379"`
+}
+
 func main() {
-	s := NewServer("0.0.0.0:6379")
+	// Parse flags
+	if _, err := flags.Parse(&Options); err != nil {
+		os.Exit(1)
+	}
+
+	// Logger setup
+	logOpts := []lgr.Option{
+		lgr.LevelBraces,
+		lgr.StackTraceOnError,
+	}
+	logOpts = append(logOpts, lgr.Debug)
+	lgr.SetupStdLogger(logOpts...)
+
+	// Start the server
+	s := NewServer(net.JoinHostPort("0.0.0.0", strconv.Itoa(Options.Port)))
+	log.Printf("[INFO] Starting server on port: %d", Options.Port)
 	err := s.ListenAndServe()
 	if err != nil {
-		fmt.Println("Error starting server: ", err)
+		log.Fatalf("[ERROR] error starting server: %e", err)
 		os.Exit(1)
 	}
 }
@@ -65,7 +86,7 @@ func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error
 	// Parse the header to get the number of elements in the array
 	arrLen := 0
 	fmt.Sscanf(header, string(TypeArray)+"%d", &arrLen)
-	log.Println("Array length parsed: ", arrLen)
+	log.Printf("array length parsed: %d", arrLen)
 	// Parse the elements
 	// reader := bufio.NewReader(s.conn)
 
@@ -77,7 +98,7 @@ func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error
 		}
 		data = strings.Trim(data, "\r\n")
 		elementLen := 0
-		fmt.Sscanf(data, "$%d", &elementLen)
+		fmt.Sscanf(data, string(TypeBulkString)+"%d", &elementLen)
 
 		// Read the element data
 		data, err = reader.ReadString('\n')
@@ -129,12 +150,12 @@ func (s *Server) handleConnection(connection net.Conn) error {
 		data, err := reader.ReadString('\n')
 		if err != nil {
 			if err.Error() == "EOF" {
-				fmt.Println("Connection closed")
+				log.Printf("[INFO] Connection closed")
 				connection.Close()
 				return nil
 			} else {
 				err = fmt.Errorf("error reading data: %w", err)
-				log.Println(err)
+				log.Printf("[ERROR] %s", err)
 				return err
 			}
 		}
@@ -149,12 +170,11 @@ func (s *Server) handleConnection(connection net.Conn) error {
 		case TypeBulkString:
 			fmt.Println("BulkString: ", data)
 		case TypeArray:
-			// fmt.Println("Array: ", data)
 			a, err := s.readArray(data, reader)
 			if err != nil {
-				log.Println("Error reading array: ", err)
+				log.Printf("[ERROR] error reading array: %e", err)
 			}
-			log.Println("Array: ", a)
+			log.Printf("Array: %v", a)
 
 			if len(a) == 0 {
 				continue
@@ -174,7 +194,7 @@ func (s *Server) handleConnection(connection net.Conn) error {
 					continue
 				}
 
-				log.Println("SET command: ", a)
+				log.Printf("[DEBUG] SET command: %v", a)
 				if len(a) == 5 && strings.ToUpper(a[3]) == "PX" {
 					exp, err := strconv.Atoi(a[4])
 					if err != nil {
@@ -183,14 +203,14 @@ func (s *Server) handleConnection(connection net.Conn) error {
 						continue
 					}
 					// Set with expiration
-					log.Printf("Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
+					log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
 					s.storage.Set(a[1], a[2], time.Millisecond*time.Duration(exp))
 					connection.Write([]byte(s.makeSimpleString("OK")))
 
 					continue
 				}
 				// Set without expiration
-				log.Printf("Setting key %s with value %s\n", a[1], a[2])
+				log.Printf("[DEBUG] Setting key %s with value %s\n", a[1], a[2])
 				s.storage.Set(a[1], a[2], 0)
 
 				connection.Write([]byte(s.makeSimpleString("OK")))
@@ -209,8 +229,6 @@ func (s *Server) handleConnection(connection net.Conn) error {
 				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 			}
 		}
-
-		// fmt.Println("Received data: ", data)
 	}
 	return nil
 }
