@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-pkgz/lgr"
-	"github.com/jessevdk/go-flags"
 	"github.com/parMaster/mcache"
 )
 
@@ -41,34 +38,6 @@ func (s *Server) ListenAndServe() error {
 		}
 
 		go s.handleConnection(conn)
-	}
-}
-
-var Options struct {
-	Port int `long:"port" short:"p" env:"PORT" description:"redis port" default:"6379"`
-}
-
-func main() {
-	// Parse flags
-	if _, err := flags.Parse(&Options); err != nil {
-		os.Exit(1)
-	}
-
-	// Logger setup
-	logOpts := []lgr.Option{
-		lgr.LevelBraces,
-		lgr.StackTraceOnError,
-	}
-	logOpts = append(logOpts, lgr.Debug)
-	lgr.SetupStdLogger(logOpts...)
-
-	// Start the server
-	s := NewServer(net.JoinHostPort("0.0.0.0", strconv.Itoa(Options.Port)))
-	log.Printf("[INFO] Starting server on port: %d", Options.Port)
-	err := s.ListenAndServe()
-	if err != nil {
-		log.Fatalf("[ERROR] error starting server: %e", err)
-		os.Exit(1)
 	}
 }
 
@@ -132,21 +101,19 @@ func (s *Server) nullBulkString() string {
 	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
-func (s *Server) makeArray(arr []string) string {
-	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
-	for _, v := range arr {
-		result += s.makeBulkString(v)
-	}
-	return result
-}
+// func (s *Server) makeArray(arr []string) string {
+// 	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
+// 	for _, v := range arr {
+// 		result += s.makeBulkString(v)
+// 	}
+// 	return result
+// }
 
 // handleConnection will read data from the connection
 func (s *Server) handleConnection(connection net.Conn) error {
 	reader := bufio.NewReader(connection)
 
-	stop := 0
-	for stop < 20 {
-		stop++
+	for {
 		data, err := reader.ReadString('\n')
 		if err != nil {
 			if err.Error() == "EOF" {
@@ -161,14 +128,6 @@ func (s *Server) handleConnection(connection net.Conn) error {
 		}
 
 		switch data[0] {
-		case TypeSimpleString:
-			fmt.Println("SimpleString: ", data)
-		case TypeSimpleError:
-			fmt.Println("SimpleError: ", data)
-		case TypeInteger:
-			fmt.Println("Integer: ", data)
-		case TypeBulkString:
-			fmt.Println("BulkString: ", data)
 		case TypeArray:
 			a, err := s.readArray(data, reader)
 			if err != nil {
@@ -230,5 +189,4 @@ func (s *Server) handleConnection(connection net.Conn) error {
 			}
 		}
 	}
-	return nil
 }
