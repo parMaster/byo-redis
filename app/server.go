@@ -31,7 +31,7 @@ func handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	stop := 0
-	for stop < 10 {
+	for stop < 20 {
 		stop++
 		data, err := reader.ReadString('\n')
 		if err != nil {
@@ -47,7 +47,6 @@ func handleConnection(conn net.Conn) {
 
 		if strings.Contains(data, "PING") {
 			conn.Write([]byte("+PONG\r\n"))
-			return
 		}
 
 	}

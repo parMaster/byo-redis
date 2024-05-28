@@ -25,7 +25,8 @@ func Test_Ping(t *testing.T) {
 
 // MockConn is a mock implementation of the net.Conn interface
 type MockConn struct {
-	cmd string
+	buff string
+	acc  string
 }
 
 // Close is a mock implementation of the net.Conn Close method
@@ -60,17 +61,18 @@ func (m *MockConn) SetWriteDeadline(t time.Time) error {
 
 // Write is a mock implementation of the net.Conn Write method
 func (m *MockConn) Write(b []byte) (n int, err error) {
-	m.cmd = string(b)
+	m.buff = string(b)
+	m.acc += m.buff
 	return len(b), nil
 }
 
 // Read is a mock implementation of the net.Conn Read method
 func (m *MockConn) Read(b []byte) (n int, err error) {
-	if len(m.cmd) == 0 {
+	if len(m.buff) == 0 {
 		return 0, nil
 	}
-	copy(b, []byte(m.cmd))
-	read := len(m.cmd)
+	copy(b, []byte(m.buff))
+	read := len(m.buff)
 	return read, nil
 }
 
@@ -83,7 +85,7 @@ func Test_handleConnection(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, len(cmd), wbytes)
 
-	assert.Equal(t, "*1\r\n$4\r\nPING\r\n", mockConn.cmd)
+	assert.Equal(t, "*1\r\n$4\r\nPING\r\n", mockConn.buff)
 
 	handleConnection(mockConn)
 
@@ -91,4 +93,28 @@ func Test_handleConnection(t *testing.T) {
 	n, err := mockConn.Read(buf)
 	assert.Nil(t, err)
 	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
+}
+
+// Respond to multiple PINGs #wy1
+func Test_doublePing(t *testing.T) {
+
+	mockConn := &MockConn{}
+
+	cmd := "*1\r\n$4\r\nPING\r\n"
+	wbytes, err := mockConn.Write([]byte(cmd + cmd))
+	assert.Nil(t, err)
+	assert.Equal(t, len(cmd)*2, wbytes)
+
+	assert.Equal(t, "*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n", mockConn.buff)
+	mockConn.acc = ""
+
+	handleConnection(mockConn)
+
+	buf := make([]byte, 1024)
+	n, err := mockConn.Read(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
+	assert.Equal(t, "+PONG\r\n+PONG\r\n", mockConn.acc)
 }
