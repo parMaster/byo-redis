@@ -21,6 +21,54 @@ func Test_Ping(t *testing.T) {
 	assert.Nil(t, err)
 
 	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
+	_, err = conn.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	assert.Nil(t, err)
+
+	buf = make([]byte, 1024)
+	n, err = conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+}
+
+func Test_Ping2Connections(t *testing.T) {
+
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	_, err = conn.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	assert.Nil(t, err)
+
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
+	conn2, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	_, err = conn2.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	assert.Nil(t, err)
+
+	buf = make([]byte, 1024)
+	n, err = conn2.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
+	// use the first connection again
+
+	_, err = conn.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	assert.Nil(t, err)
+
+	buf = make([]byte, 1024)
+	n, err = conn.Read(buf)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "+PONG\r\n", string(buf[:n]))
+
 }
 
 func Test_Echo(t *testing.T) {
@@ -103,8 +151,7 @@ func Test_handleConnection(t *testing.T) {
 	assert.Equal(t, "*1\r\n$4\r\nPING\r\n", mockConn.buff)
 
 	server := NewServer("0.0.0.0:6379")
-	server.conn = mockConn
-	server.handleConnection()
+	server.handleConnection(mockConn)
 
 	buf := make([]byte, 1024)
 	n, err := mockConn.Read(buf)
@@ -127,8 +174,7 @@ func Test_doublePing(t *testing.T) {
 	mockConn.acc = ""
 
 	server := NewServer("0.0.0.0:6379")
-	server.conn = mockConn
-	server.handleConnection()
+	server.handleConnection(mockConn)
 
 	buf := make([]byte, 1024)
 	n, err := mockConn.Read(buf)

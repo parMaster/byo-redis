@@ -11,7 +11,6 @@ import (
 
 type Server struct {
 	Addr string
-	conn net.Conn
 }
 
 func NewServer(addr string) *Server {
@@ -26,12 +25,12 @@ func (s *Server) ListenAndServe() error {
 		return err
 	}
 	for {
-		s.conn, err = l.Accept()
+		conn, err := l.Accept()
 		if err != nil {
 			return err
 		}
 
-		go s.handleConnection()
+		go s.handleConnection(conn)
 	}
 }
 
@@ -52,10 +51,6 @@ const (
 	BulkString   = '$'
 	Array        = '*'
 )
-
-func (s *Server) Close() {
-	s.conn.Close()
-}
 
 func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error) {
 	result := []string{}
@@ -110,8 +105,8 @@ func (s *Server) makeArray(arr []string) string {
 }
 
 // handleConnection will read data from the connection
-func (s *Server) handleConnection() error {
-	reader := bufio.NewReader(s.conn)
+func (s *Server) handleConnection(connection net.Conn) error {
+	reader := bufio.NewReader(connection)
 
 	stop := 0
 	for stop < 20 {
@@ -120,7 +115,7 @@ func (s *Server) handleConnection() error {
 		if err != nil {
 			if err.Error() == "EOF" {
 				fmt.Println("Connection closed")
-				s.Close()
+				connection.Close()
 				return nil
 			} else {
 				err = fmt.Errorf("error reading data: %w", err)
@@ -139,7 +134,7 @@ func (s *Server) handleConnection() error {
 		case BulkString:
 			fmt.Println("BulkString: ", data)
 		case Array:
-			fmt.Println("Array: ", data)
+			// fmt.Println("Array: ", data)
 			a, err := s.readArray(data, reader)
 			if err != nil {
 				log.Println("Error reading array: ", err)
@@ -151,13 +146,13 @@ func (s *Server) handleConnection() error {
 			}
 			switch strings.ToUpper(a[0]) {
 			case "PING":
-				s.conn.Write([]byte(s.makeSimpleString("PONG")))
+				connection.Write([]byte(s.makeSimpleString("PONG")))
 			case "ECHO":
 				if len(a) != 2 {
-					s.conn.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
 					continue
 				}
-				s.conn.Write([]byte(s.makeBulkString(a[1])))
+				connection.Write([]byte(s.makeBulkString(a[1])))
 			}
 		}
 
