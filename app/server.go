@@ -6,7 +6,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/parMaster/mcache"
 )
@@ -51,18 +53,18 @@ func main() {
 
 // Response Data types
 const (
-	SimpleString = '+'
-	SimpleError  = '-'
-	Integer      = ':'
-	BulkString   = '$'
-	Array        = '*'
+	TypeSimpleString = '+'
+	TypeSimpleError  = '-'
+	TypeInteger      = ':'
+	TypeBulkString   = '$'
+	TypeArray        = '*'
 )
 
 func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error) {
 	result := []string{}
 	// Parse the header to get the number of elements in the array
 	arrLen := 0
-	fmt.Sscanf(header, "*%d", &arrLen)
+	fmt.Sscanf(header, string(TypeArray)+"%d", &arrLen)
 	log.Println("Array length parsed: ", arrLen)
 	// Parse the elements
 	// reader := bufio.NewReader(s.conn)
@@ -95,22 +97,22 @@ func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error
 }
 
 func (s *Server) makeSimpleString(data string) string {
-	return fmt.Sprintf("%c%s\r\n", SimpleString, data)
+	return fmt.Sprintf("%c%s\r\n", TypeSimpleString, data)
 }
 
 func (s *Server) makeBulkString(data string) string {
 	if data == "" {
-		return "$0\r\n\r\n"
+		return fmt.Sprintf("%c\r\n\r\n", TypeBulkString)
 	}
-	return fmt.Sprintf("%c%d\r\n%s\r\n", BulkString, len(data), data)
+	return fmt.Sprintf("%c%d\r\n%s\r\n", TypeBulkString, len(data), data)
 }
 
 func (s *Server) nullBulkString() string {
-	return "$-1\r\n"
+	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
 func (s *Server) makeArray(arr []string) string {
-	result := fmt.Sprintf("%c%d\r\n", Array, len(arr))
+	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
 	for _, v := range arr {
 		result += s.makeBulkString(v)
 	}
@@ -138,15 +140,15 @@ func (s *Server) handleConnection(connection net.Conn) error {
 		}
 
 		switch data[0] {
-		case SimpleString:
+		case TypeSimpleString:
 			fmt.Println("SimpleString: ", data)
-		case SimpleError:
+		case TypeSimpleError:
 			fmt.Println("SimpleError: ", data)
-		case Integer:
+		case TypeInteger:
 			fmt.Println("Integer: ", data)
-		case BulkString:
+		case TypeBulkString:
 			fmt.Println("BulkString: ", data)
-		case Array:
+		case TypeArray:
 			// fmt.Println("Array: ", data)
 			a, err := s.readArray(data, reader)
 			if err != nil {
@@ -167,11 +169,28 @@ func (s *Server) handleConnection(connection net.Conn) error {
 				}
 				connection.Write([]byte(s.makeBulkString(a[1])))
 			case "SET":
-				if len(a) != 3 {
+				if len(a) < 3 {
 					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'set' command")))
 					continue
 				}
 
+				log.Println("SET command: ", a)
+				if len(a) == 5 && strings.ToUpper(a[3]) == "PX" {
+					exp, err := strconv.Atoi(a[4])
+					if err != nil {
+						connection.Write([]byte(s.makeSimpleString("ERR invalid expiration")))
+						log.Println("Error parsing expiration: ", err)
+						continue
+					}
+					// Set with expiration
+					log.Printf("Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
+					s.storage.Set(a[1], a[2], time.Millisecond*time.Duration(exp))
+					connection.Write([]byte(s.makeSimpleString("OK")))
+
+					continue
+				}
+				// Set without expiration
+				log.Printf("Setting key %s with value %s\n", a[1], a[2])
 				s.storage.Set(a[1], a[2], 0)
 
 				connection.Write([]byte(s.makeSimpleString("OK")))
