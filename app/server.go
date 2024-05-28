@@ -37,6 +37,7 @@ func (s *Server) ListenAndServe() error {
 			return err
 		}
 
+		log.Printf("[INFO] New connection from: %v (%v)", conn.RemoteAddr(), conn)
 		go s.handleConnection(conn)
 	}
 }
@@ -50,14 +51,101 @@ const (
 	TypeArray        = '*'
 )
 
-func (s *Server) readArray(header string, reader *bufio.Reader) ([]string, error) {
+// handleConnection will read data from the connection
+func (s *Server) handleConnection(connection net.Conn) error {
+	reader := bufio.NewReader(connection)
+
+	for {
+		cmd, err := reader.ReadByte()
+		if err != nil {
+			if err.Error() == "EOF" {
+				log.Printf("[INFO] Connection closed (EOF), %v", connection)
+				connection.Close()
+				return nil
+			} else {
+				err = fmt.Errorf("error reading data: %w", err)
+				log.Printf("[ERROR] %s", err)
+				return err
+			}
+		}
+
+		switch cmd {
+		case TypeArray:
+			a, err := s.readArray(reader)
+			if err != nil {
+				log.Printf("[ERROR] error reading array: %e", err)
+			}
+			log.Printf("[DEBUG] Array: %v", a)
+
+			if len(a) == 0 {
+				continue
+			}
+			switch strings.ToUpper(a[0]) {
+			case "PING":
+				connection.Write([]byte(s.makeSimpleString("PONG")))
+			case "ECHO":
+				if len(a) != 2 {
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
+					continue
+				}
+				connection.Write([]byte(s.makeBulkString(a[1])))
+			case "SET":
+				if len(a) < 3 {
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'set' command")))
+					continue
+				}
+
+				log.Printf("[DEBUG] SET command: %v", a)
+				if len(a) == 5 && strings.ToUpper(a[3]) == "PX" {
+					exp, err := strconv.Atoi(a[4])
+					if err != nil {
+						connection.Write([]byte(s.makeSimpleString("ERR invalid expiration")))
+						log.Printf("[ERROR] error parsing expiration: %e", err)
+						continue
+					}
+					// Set with expiration
+					log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
+					s.storage.Set(a[1], a[2], time.Millisecond*time.Duration(exp))
+					connection.Write([]byte(s.makeSimpleString("OK")))
+
+					continue
+				}
+				// Set without expiration
+				log.Printf("[DEBUG] Setting key %s with value %s\n", a[1], a[2])
+				s.storage.Set(a[1], a[2], 0)
+
+				connection.Write([]byte(s.makeSimpleString("OK")))
+			case "GET":
+				if len(a) != 2 {
+					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'get' command")))
+					continue
+				}
+				value, err := s.storage.Get(a[1])
+				if err != nil {
+					connection.Write([]byte(s.nullBulkString()))
+					continue
+				}
+				connection.Write([]byte(s.makeBulkString(value)))
+			default:
+				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
+			}
+		}
+	}
+}
+
+func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 	result := []string{}
+
 	// Parse the header to get the number of elements in the array
 	arrLen := 0
-	fmt.Sscanf(header, string(TypeArray)+"%d", &arrLen)
-	log.Printf("array length parsed: %d", arrLen)
-	// Parse the elements
-	// reader := bufio.NewReader(s.conn)
+	header, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	header = strings.Trim(header, "\r\n")
+
+	fmt.Sscanf(header, "%d", &arrLen)
+	log.Printf("[DEBUG] array length parsed: %d", arrLen)
 
 	for i := 0; i < arrLen; i++ {
 		// Read the header of the element ($<element length>)
@@ -108,85 +196,3 @@ func (s *Server) nullBulkString() string {
 // 	}
 // 	return result
 // }
-
-// handleConnection will read data from the connection
-func (s *Server) handleConnection(connection net.Conn) error {
-	reader := bufio.NewReader(connection)
-
-	for {
-		data, err := reader.ReadString('\n')
-		if err != nil {
-			if err.Error() == "EOF" {
-				log.Printf("[INFO] Connection closed")
-				connection.Close()
-				return nil
-			} else {
-				err = fmt.Errorf("error reading data: %w", err)
-				log.Printf("[ERROR] %s", err)
-				return err
-			}
-		}
-
-		switch data[0] {
-		case TypeArray:
-			a, err := s.readArray(data, reader)
-			if err != nil {
-				log.Printf("[ERROR] error reading array: %e", err)
-			}
-			log.Printf("Array: %v", a)
-
-			if len(a) == 0 {
-				continue
-			}
-			switch strings.ToUpper(a[0]) {
-			case "PING":
-				connection.Write([]byte(s.makeSimpleString("PONG")))
-			case "ECHO":
-				if len(a) != 2 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
-					continue
-				}
-				connection.Write([]byte(s.makeBulkString(a[1])))
-			case "SET":
-				if len(a) < 3 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'set' command")))
-					continue
-				}
-
-				log.Printf("[DEBUG] SET command: %v", a)
-				if len(a) == 5 && strings.ToUpper(a[3]) == "PX" {
-					exp, err := strconv.Atoi(a[4])
-					if err != nil {
-						connection.Write([]byte(s.makeSimpleString("ERR invalid expiration")))
-						log.Println("Error parsing expiration: ", err)
-						continue
-					}
-					// Set with expiration
-					log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
-					s.storage.Set(a[1], a[2], time.Millisecond*time.Duration(exp))
-					connection.Write([]byte(s.makeSimpleString("OK")))
-
-					continue
-				}
-				// Set without expiration
-				log.Printf("[DEBUG] Setting key %s with value %s\n", a[1], a[2])
-				s.storage.Set(a[1], a[2], 0)
-
-				connection.Write([]byte(s.makeSimpleString("OK")))
-			case "GET":
-				if len(a) != 2 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'get' command")))
-					continue
-				}
-				value, err := s.storage.Get(a[1])
-				if err != nil {
-					connection.Write([]byte(s.nullBulkString()))
-					continue
-				}
-				connection.Write([]byte(s.makeBulkString(value)))
-			default:
-				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
-			}
-		}
-	}
-}
