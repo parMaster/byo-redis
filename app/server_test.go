@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,7 +159,12 @@ func TestInfo(t *testing.T) {
 	n, err := conn.Read(buf)
 	assert.Nil(t, err)
 
-	assert.Equal(t, "$11\r\nReplication\r\nrole:master\r\n", string(buf[:n]))
+	info := string(buf[:n])
+	infos := strings.Split(info, "\r\n")
+	assert.Equal(t, "Replication", infos[1])
+	assert.Equal(t, "role:master", infos[2])
+	assert.Equal(t, "master_replid:", infos[3][:14])
+
 }
 
 func TestInfoSlave(t *testing.T) {

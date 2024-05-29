@@ -39,7 +39,8 @@ func NewServer(addr string) *Server {
 	}
 
 	// Generate a 40-character long replication ID
-	// server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr))) // unsopported on codecrafters hardware
+	// server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr)))
+	// unsopported on codecrafters hardware
 	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
 	for range 40 {
 		server.replId += string(letters[rand.Intn(len(letters))])
@@ -48,7 +49,7 @@ func NewServer(addr string) *Server {
 	return server
 }
 
-func (s *Server) AsSlaveOf(masterAddr string) {
+func (s *Server) AsSlaveOf(masterAddr string) error {
 	s.role = RoleSlave
 
 	// Connect to the master
@@ -60,6 +61,50 @@ func (s *Server) AsSlaveOf(masterAddr string) {
 
 	// Send PING command
 	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
+	typeResponse, args, err := s.readInput(s.masterConn)
+	if err != nil {
+		log.Printf("[ERROR] error reading response from master: %e", err)
+		return err
+	}
+	if typeResponse != TypeSimpleString || args[0] != "PONG" {
+		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
+		log.Printf("[ERROR] %e", err)
+		return err
+	}
+	log.Printf("[DEBUG] Received PONG from master (%s)", masterAddr)
+
+	// Send REPLCONF listening-port <PORT>
+	_, port, err := net.SplitHostPort(s.Addr)
+	if err != nil {
+		log.Printf("[ERROR] error parsing server address: %e", err)
+		return err
+	}
+	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "listening-port", port})))
+	typeResponse, args, err = s.readInput(s.masterConn)
+	if err != nil {
+		log.Printf("[ERROR] error reading response from master: %e", err)
+		return err
+	}
+	if typeResponse != TypeSimpleString || args[0] != "OK" {
+		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
+		log.Printf("[ERROR] %e", err)
+		return err
+	}
+
+	// Send REPLCONF capa psync2
+	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "capa", "psync2"})))
+	typeResponse, args, err = s.readInput(s.masterConn)
+	if err != nil {
+		log.Printf("[ERROR] error reading response from master: %e", err)
+		return err
+	}
+	if typeResponse != TypeSimpleString || args[0] != "OK" {
+		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
+		log.Printf("[ERROR] %e", err)
+		return err
+	}
+
+	return nil
 }
 
 func (s *Server) ListenAndServe() error {
@@ -89,87 +134,159 @@ const (
 
 // handleConnection will read data from the connection
 func (s *Server) handleConnection(connection net.Conn) error {
-	reader := bufio.NewReader(connection)
-
 	for {
-		cmd, err := reader.ReadByte()
+		// Read the input
+		typeResponse, args, err := s.readInput(connection)
 		if err != nil {
 			if err.Error() == "EOF" {
-				log.Printf("[INFO] Connection closed (EOF), %v", connection)
 				connection.Close()
 				return nil
-			} else {
-				err = fmt.Errorf("error reading data: %w", err)
-				log.Printf("[ERROR] %s", err)
-				return err
 			}
+			return err
 		}
 
-		switch cmd {
-		case TypeArray:
-			a, err := s.readArray(reader)
-			if err != nil {
-				log.Printf("[ERROR] error reading array: %e", err)
-			}
-			log.Printf("[DEBUG] Array: %v", a)
+		// Check the type of response
+		if typeResponse != TypeArray {
+			connection.Write([]byte(s.makeSimpleString("ERR invalid command")))
+			continue
+		}
 
-			if len(a) == 0 {
-				continue
-			}
-			switch strings.ToUpper(a[0]) {
-			case "PING":
-				connection.Write([]byte(s.makeSimpleString("PONG")))
-			case "ECHO":
-				if len(a) != 2 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'echo' command")))
-					continue
-				}
-				connection.Write([]byte(s.makeBulkString(a[1])))
-			case "SET":
-				if len(a) < 3 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'set' command")))
-					continue
-				}
+		// Handle the command
+		err = s.handleCommand(args, connection)
+		if err != nil {
+			log.Printf("[ERROR] error handling command: %e", err)
+		}
 
-				log.Printf("[DEBUG] SET command: %v", a)
-				if len(a) == 5 && strings.ToUpper(a[3]) == "PX" {
-					exp, err := strconv.Atoi(a[4])
-					if err != nil {
-						connection.Write([]byte(s.makeSimpleString("ERR invalid expiration")))
-						log.Printf("[ERROR] error parsing expiration: %e", err)
-						continue
-					}
-					// Set with expiration
-					log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n", a[1], a[2], a[4])
-					s.storage.Set(a[1], a[2], time.Millisecond*time.Duration(exp))
-					connection.Write([]byte(s.makeSimpleString("OK")))
+	}
+}
 
-					continue
-				}
-				// Set without expiration
-				log.Printf("[DEBUG] Setting key %s with value %s\n", a[1], a[2])
-				s.storage.Set(a[1], a[2], 0)
-
-				connection.Write([]byte(s.makeSimpleString("OK")))
-			case "GET":
-				if len(a) != 2 {
-					connection.Write([]byte(s.makeSimpleString("ERR wrong number of arguments for 'get' command")))
-					continue
-				}
-				value, err := s.storage.Get(a[1])
-				if err != nil {
-					connection.Write([]byte(s.nullBulkString()))
-					continue
-				}
-				connection.Write([]byte(s.makeBulkString(value)))
-			case "INFO":
-				info := s.getInfo()
-				connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
-			default:
-				connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
-			}
+func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []string, err error) {
+	reader := bufio.NewReader(connection)
+	cmd, err := reader.ReadByte()
+	if err != nil {
+		if err.Error() == "EOF" {
+			log.Printf("[INFO] Connection closed (EOF), %v", connection)
+			return TypeSimpleError, nil, err
+		} else {
+			err = fmt.Errorf("error reading data: %w", err)
+			log.Printf("[DEBUG] %s", err)
+			return TypeSimpleError, nil, err
 		}
 	}
+
+	switch cmd {
+	case TypeArray:
+		args, err := s.readArray(reader)
+		if err != nil {
+			log.Printf("[ERROR] error reading array: %e", err)
+		}
+		log.Printf("[DEBUG] Array: %v", args)
+
+		if len(args) == 0 {
+			return TypeSimpleError, nil, fmt.Errorf("empty array")
+		}
+
+		return TypeArray, args, nil
+
+	case TypeSimpleString:
+		data, err := s.readSimpleString(reader)
+		if err != nil {
+			log.Printf("[ERROR] error reading simple string: %e", err)
+		}
+		log.Printf("[DEBUG] Simple string: %s", data)
+
+		return TypeSimpleString, []string{data}, nil
+	}
+
+	return TypeSimpleError, nil, fmt.Errorf("invalid command: not an array")
+}
+
+func (s *Server) handleCommand(args []string, connection net.Conn) error {
+	var err error
+
+	switch strings.ToUpper(args[0]) {
+	case "PING":
+		log.Printf("[DEBUG] PING command: %v", args)
+		connection.Write([]byte(s.makeSimpleString("PONG")))
+
+	case "ECHO":
+		log.Printf("[DEBUG] ECHO command: %v", args)
+		if len(args) < 2 {
+			err = fmt.Errorf("wrong number of arguments for 'echo' command")
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+		connection.Write([]byte(s.makeBulkString(args[1])))
+
+	case "SET":
+		log.Printf("[DEBUG] SET command: %v", args)
+
+		if len(args) < 3 {
+			err = fmt.Errorf("wrong number of arguments for 'set' command")
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+
+		if len(args) == 5 && strings.ToUpper(args[3]) == "PX" {
+			exp, err := strconv.Atoi(args[4])
+			if err != nil {
+				err = fmt.Errorf("error parsing expiration: %w", err)
+				connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+				log.Printf("[ERROR] %e", err)
+				return err
+			}
+			// Set with expiration
+			log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n",
+				args[1], args[2], args[4])
+			s.storage.Set(args[1], args[2], time.Millisecond*time.Duration(exp))
+			connection.Write([]byte(s.makeSimpleString("OK")))
+
+			return nil
+		}
+		// Set without expiration
+		log.Printf("[DEBUG] Setting key %s with value %s\n", args[1], args[2])
+		s.storage.Set(args[1], args[2], 0)
+		connection.Write([]byte(s.makeSimpleString("OK")))
+
+	case "GET":
+		log.Printf("[DEBUG] GET command: %v", args)
+		if len(args) != 2 {
+			err = fmt.Errorf("wrong number of arguments for 'get' command")
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+		value, err := s.storage.Get(args[1])
+		if err != nil {
+			connection.Write([]byte(s.nullBulkString()))
+			return nil
+		}
+		connection.Write([]byte(s.makeBulkString(value)))
+
+	case "INFO":
+		info := s.getInfo()
+		connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
+		log.Printf("[DEBUG] INFO command: %v", info)
+	case "REPLCONF":
+		err = s.replConf(args)
+		if err != nil {
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+		connection.Write([]byte(s.makeSimpleString("OK")))
+	default:
+		connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
+	}
+	return nil
+}
+
+func (s *Server) replConf(args []string) error {
+	if len(args) < 3 {
+		err := fmt.Errorf("wrong number of arguments for 'replconf' command")
+		return err
+	}
+	// Further replication configuration ...
+
+	return nil
 }
 
 func (s Server) getInfo() []string {
@@ -215,7 +332,8 @@ func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 		data = strings.Trim(data, "\r\n")
 
 		if len(data) != elementLen {
-			return nil, fmt.Errorf("error reading element: expected %d bytes, got %d", elementLen, len(data))
+			return nil, fmt.Errorf("error reading element: expected %d bytes, got %d",
+				elementLen, len(data))
 		}
 
 		result = append(result, data)
@@ -226,6 +344,15 @@ func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 
 func (s *Server) makeSimpleString(data string) string {
 	return fmt.Sprintf("%c%s\r\n", TypeSimpleString, data)
+}
+
+func (s *Server) readSimpleString(reader *bufio.Reader) (string, error) {
+	data, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	data = strings.Trim(data, "\r\n")
+	return data, nil
 }
 
 func (s *Server) makeBulkString(data string) string {
