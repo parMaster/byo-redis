@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto"
 	"fmt"
 	"log"
 	"net"
@@ -19,19 +20,27 @@ const (
 )
 
 type Server struct {
-	Addr    string
-	storage *mcache.Cache[string]
-	role    string
+	Addr       string
+	storage    *mcache.Cache[string]
+	role       string
+	replId     string
+	replOffset int
 }
 
 func NewServer(addr string) *Server {
 	store := mcache.NewCache[string]()
 
-	return &Server{
-		Addr:    addr,
-		storage: store,
-		role:    RoleMaster,
+	server := &Server{
+		Addr:       addr,
+		storage:    store,
+		role:       RoleMaster,
+		replOffset: 0,
 	}
+
+	// Generate a 40-character long replication ID
+	server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr)))[:40]
+
+	return server
 }
 
 func (s *Server) AsSlaveOf(masterAddr string) {
@@ -152,6 +161,10 @@ func (s Server) getInfo() []string {
 	info := []string{}
 	info = append(info, "Replication")
 	info = append(info, "role:"+s.role)
+	if s.role == RoleMaster {
+		info = append(info, fmt.Sprintf("master_repl_id:%s", s.replId))
+		info = append(info, fmt.Sprintf("master_repl_offset:%d", s.replOffset))
+	}
 	return info
 }
 

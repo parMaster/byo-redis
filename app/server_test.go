@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net"
 	"testing"
 	"time"
@@ -167,6 +168,11 @@ func TestInfoSlave(t *testing.T) {
 	info := s.getInfo()
 	assert.Equal(t, "Replication", info[0])
 	assert.Equal(t, "role:master", info[1])
+	masterReplId := info[2]
+	log.Println(masterReplId)
+	assert.Equal(t, "master_repl_id:", info[2][:15])
+	assert.Equal(t, 15+40, len(masterReplId))
+	assert.Equal(t, "master_repl_offset:0", info[3])
 
 	s.AsSlaveOf("0.0.0.0:6379")
 
