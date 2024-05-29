@@ -59,6 +59,16 @@ func (s *Server) makeSimpleError(data string) string {
 	return fmt.Sprintf("%c%s\r\n", TypeSimpleError, data)
 }
 
+// readSimpleError reads a simple error from the reader
+func (s *Server) readSimpleError(reader *bufio.Reader) (string, error) {
+	data, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	data = strings.Trim(data, "\r\n")
+	return data, nil
+}
+
 // makeSimpleString returns a simple string response
 func (s *Server) makeSimpleString(data string) string {
 	return fmt.Sprintf("%c%s\r\n", TypeSimpleString, data)

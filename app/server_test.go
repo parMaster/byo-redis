@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"log"
 	"net"
 	"strings"
@@ -208,18 +209,43 @@ func TestReplicas(t *testing.T) {
 	// try to set a key in the master
 	conn, err := net.Dial("tcp", "0.0.0.0:6379")
 	assert.Nil(t, err)
-	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$2\r\npx\r\n$4\r\n1000\r\n"))
+	// buf := make([]byte, 1024)
+	reader := bufio.NewReader(conn)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n123\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	reader.ReadLine()
 	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n456\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	reader.ReadLine()
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+	reader.ReadLine()
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(time.Second)
 
 	v1, err := r1.storage.Get("foo")
 	assert.Nil(t, err)
-	assert.Equal(t, "bar", v1)
+	assert.Equal(t, "123", v1)
+
+	v1, err = r1.storage.Get("bar")
+	assert.Nil(t, err)
+	assert.Equal(t, "456", v1)
+
+	v1, err = r1.storage.Get("baz")
+	assert.Nil(t, err)
+	assert.Equal(t, "789", v1)
 
 	v2, err := r2.storage.Get("foo")
 	assert.Nil(t, err)
-	assert.Equal(t, "bar", v2)
+	assert.Equal(t, "123", v2)
+
+	v2, err = r2.storage.Get("bar")
+	assert.Nil(t, err)
+	assert.Equal(t, "456", v2)
+
+	v2, err = r2.storage.Get("baz")
+	assert.Nil(t, err)
+	assert.Equal(t, "789", v2)
 
 }
 
