@@ -304,13 +304,14 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
 
 		// Send RDB data
-		rdbData, err := s.makeRDBString()
+		rdbLen, rdbData, err := s.makeRDBFile()
 		if err != nil {
 			log.Printf("[ERROR] error generating RDB data: %e", err)
 			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
 			return err
 		}
-		connection.Write([]byte(rdbData))
+		connection.Write([]byte(fmt.Sprintf("%c%d\r\n", TypeBulkString, rdbLen)))
+		connection.Write(rdbData)
 
 	default:
 		connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
@@ -436,14 +437,14 @@ func (s *Server) makeArray(arr []string) string {
 	return result
 }
 
-func (s *Server) makeRDBString() (string, error) {
+func (s *Server) makeRDBFile() (int, []byte, error) {
 	// hardcode file content for now
 	base64Content := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
 	// decode into binary
 	decoded, err := base64.StdEncoding.DecodeString(base64Content)
 	if err != nil {
-		return "", err
+		return 0, []byte{}, err
 	}
 
-	return fmt.Sprintf("%c%d\r\n%v", TypeBulkString, len(decoded), decoded), nil
+	return len(decoded), decoded, nil
 }
