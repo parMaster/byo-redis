@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"math/rand"
@@ -301,6 +302,16 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			return err
 		}
 		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
+
+		// Send RDB data
+		rdbData, err := s.makeRDBString()
+		if err != nil {
+			log.Printf("[ERROR] error generating RDB data: %e", err)
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+		connection.Write([]byte(rdbData))
+
 	default:
 		connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 	}
@@ -423,4 +434,16 @@ func (s *Server) makeArray(arr []string) string {
 		result += s.makeBulkString(v)
 	}
 	return result
+}
+
+func (s *Server) makeRDBString() (string, error) {
+	// hardcode file content for now
+	base64Content := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
+	// decode into binary
+	decoded, err := base64.StdEncoding.DecodeString(base64Content)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%c%d\r\n%v", TypeBulkString, len(decoded), decoded), nil
 }
