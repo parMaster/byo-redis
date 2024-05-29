@@ -162,12 +162,6 @@ func (s *Server) propagate(args []string) error {
 			}
 		}
 		log.Printf("[DEBUG] %d bytes written to replica %s", n, ra)
-		_, resp, err := s.readInput(repl.conn)
-		if err != nil {
-			log.Printf("[ERROR] error reading response from replica %s: %e", ra, err)
-			continue
-		}
-		log.Printf("[DEBUG] Response from replica %s: %v", ra, resp)
 	}
 
 	return nil
