@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"log"
 	"net"
 	"strings"
@@ -180,18 +179,20 @@ func TestInfo(t *testing.T) {
 
 func TestReplicas(t *testing.T) {
 
+	time.Sleep(time.Second)
+
 	r1addr := "127.0.0.1:6395"
 	r1 := NewServer(r1addr)
 	//
-	go r1.ListenAndServe()
 	err := r1.AsSlaveOf("0.0.0.0:6379")
+	go r1.ListenAndServe()
 	assert.Nil(t, err)
 
 	r2addr := "127.0.0.1:6396"
 	r2 := NewServer(r2addr)
 	//
-	go r2.ListenAndServe()
 	err = r2.AsSlaveOf("0.0.0.0:6379")
+	go r2.ListenAndServe()
 	assert.Nil(t, err)
 
 	time.Sleep(time.Second)
@@ -210,18 +211,21 @@ func TestReplicas(t *testing.T) {
 	conn, err := net.Dial("tcp", "0.0.0.0:6379")
 	assert.Nil(t, err)
 	// buf := make([]byte, 1024)
-	reader := bufio.NewReader(conn)
+	// reader := bufio.NewReader(conn)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n123\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
-	reader.ReadLine()
+	conn.Read(make([]byte, 1024))
+	// reader.ReadLine()
 	assert.Nil(t, err)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n456\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
-	reader.ReadLine()
+	conn.Read(make([]byte, 1024))
+	// reader.ReadLine()
 	assert.Nil(t, err)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
 	assert.Nil(t, err)
-	reader.ReadLine()
+	conn.Read(make([]byte, 1024))
+	// reader.ReadLine()
 
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
 
 	v1, err := r1.storage.Get("foo")
 	assert.Nil(t, err)
