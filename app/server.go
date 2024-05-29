@@ -2,14 +2,13 @@ package main
 
 import (
 	"bufio"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
-	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/parMaster/mcache"
@@ -21,112 +20,47 @@ const (
 	RoleSlave  = "slave"
 )
 
+type Replica struct {
+	Addr string
+	Port int
+	// replId       string
+	// replOffset   int
+	conn         net.Conn
+	capabilities []string
+}
+
 type Server struct {
 	Addr         string
 	storage      *mcache.Cache[string]
 	role         string
 	replId       string
 	replOffset   int
+	replicas     map[string]Replica
 	capabilities []string
 	masterConn   net.Conn
+	mx           sync.Mutex
 }
 
 func NewServer(addr string) *Server {
 	store := mcache.NewCache[string]()
 
 	server := &Server{
-		Addr:       addr,
-		storage:    store,
-		role:       RoleMaster,
-		replOffset: 0,
+		Addr:         addr,
+		storage:      store,
+		role:         RoleMaster,
+		replOffset:   0,
+		capabilities: []string{"psync2", "eof"},
+		replicas:     make(map[string]Replica),
+		mx:           sync.Mutex{},
 	}
 
 	// Generate a 40-character long replication ID
-	// server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr)))
-	// unsopported on codecrafters hardware
 	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	for range 40 {
 		server.replId += string(letters[rand.Intn(len(letters))])
 	}
 
 	return server
-}
-
-func (s *Server) AsSlaveOf(masterAddr string) error {
-	s.role = RoleSlave
-
-	// Connect to the master
-	var err error
-	s.masterConn, err = net.Dial("tcp", masterAddr)
-	if err != nil {
-		log.Fatalf("[ERROR] error connecting to master: %e", err)
-	}
-
-	// Send PING command
-	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
-	typeResponse, args, err := s.readInput(s.masterConn)
-	if err != nil {
-		log.Printf("[ERROR] error reading response from master: %e", err)
-		return err
-	}
-	if typeResponse != TypeSimpleString || args[0] != "PONG" {
-		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
-		log.Printf("[ERROR] %e", err)
-		return err
-	}
-	log.Printf("[DEBUG] Received PONG from master (%s)", masterAddr)
-
-	// Send REPLCONF listening-port <PORT>
-	_, port, err := net.SplitHostPort(s.Addr)
-	if err != nil {
-		log.Printf("[ERROR] error parsing server address: %e", err)
-		return err
-	}
-	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "listening-port", port})))
-	typeResponse, args, err = s.readInput(s.masterConn)
-	if err != nil {
-		log.Printf("[ERROR] error reading response from master: %e", err)
-		return err
-	}
-	if typeResponse != TypeSimpleString || args[0] != "OK" {
-		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
-		log.Printf("[ERROR] %e", err)
-		return err
-	}
-
-	// Send REPLCONF capa psync2
-	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "capa", "psync2"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
-	if err != nil {
-		log.Printf("[ERROR] error reading response from master: %e", err)
-		return err
-	}
-	if typeResponse != TypeSimpleString || args[0] != "OK" {
-		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
-		log.Printf("[ERROR] %e", err)
-		return err
-	}
-
-	// Send PSYNC ? -1 to ask for a full synchronization
-	s.masterConn.Write([]byte(s.makeArray([]string{"PSYNC", "?", "-1"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
-	if err != nil {
-		log.Printf("[ERROR] error reading response from master: %e", err)
-		return err
-	}
-	if len(args) != 1 {
-		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
-		log.Printf("[ERROR] %e", err)
-		return err
-	}
-	args = strings.Split(args[0], " ") // FULLRESYNC <replid> <offset>
-	if typeResponse != TypeSimpleString || args[0] != "FULLRESYNC" {
-		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
-		log.Printf("[ERROR] %e", err)
-		return err
-	}
-
-	return nil
 }
 
 func (s *Server) ListenAndServe() error {
@@ -262,13 +196,16 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 				args[1], args[2], args[4])
 			s.storage.Set(args[1], args[2], time.Millisecond*time.Duration(exp))
 			connection.Write([]byte(s.makeSimpleString("OK")))
+			s.propagate(args)
 
 			return nil
 		}
 		// Set without expiration
 		log.Printf("[DEBUG] Setting key %s with value %s\n", args[1], args[2])
+
 		s.storage.Set(args[1], args[2], 0)
 		connection.Write([]byte(s.makeSimpleString("OK")))
+		s.propagate(args)
 
 	case "GET":
 		log.Printf("[DEBUG] GET command: %v", args)
@@ -290,11 +227,27 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		log.Printf("[DEBUG] INFO command: %v", info)
 
 	case "REPLCONF":
-		err = s.replConf(args)
+		if s.role != RoleMaster {
+			err = fmt.Errorf("REPLCONF command is only valid for master servers")
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			return err
+		}
+
+		s.mx.Lock()
+		// replAddr is a temp session ID, since handshake is a single connection
+		replAddr := connection.RemoteAddr().String()
+		err = s.replConf(replAddr, args)
 		if err != nil {
 			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
+
+		if repl, ok := s.replicas[replAddr]; ok {
+			repl.conn = connection
+			s.replicas[replAddr] = repl
+		}
+		s.mx.Unlock()
+
 		connection.Write([]byte(s.makeSimpleString("OK")))
 
 	case "PSYNC":
@@ -305,6 +258,16 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		}
 		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
 
+		// handshake is complete, replace temp session ID with the actual replica address
+		s.mx.Lock()
+		replAddr := connection.RemoteAddr().String()
+		if repl, ok := s.replicas[replAddr]; ok {
+			s.replicas[net.JoinHostPort(repl.Addr, strconv.Itoa(repl.Port))] = repl
+			delete(s.replicas, replAddr)
+		}
+		s.mx.Unlock()
+
+		// start the replication
 		// Send RDB data
 		rdbLen, rdbData, err := s.makeRDBFile()
 		if err != nil {
@@ -321,40 +284,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 	return nil
 }
 
-func (s *Server) psyncConfig(args []string) error {
-	if len(args) < 3 {
-		err := fmt.Errorf("wrong number of arguments for 'psync' command")
-		return err
-	}
-	// Further replication configuration ...
-	if !slices.Contains(s.capabilities, "psync2") {
-		err := fmt.Errorf("unsupported PSYNC capabilities")
-		return err
-	}
-
-	return nil
-}
-
-func (s *Server) replConf(args []string) error {
-	if len(args) < 3 {
-		err := fmt.Errorf("wrong number of arguments for 'replconf' command")
-		return err
-	}
-	// Further replication configuration ...
-	for i := 1; i < len(args); i += 2 {
-		switch strings.ToLower(args[i]) {
-		case "listening-port":
-			// Listening port configuration
-		case "capa":
-			// Capabilities configuration
-			s.capabilities = append(s.capabilities, args[i+1])
-		}
-	}
-
-	return nil
-}
-
-func (s Server) getInfo() []string {
+func (s *Server) getInfo() []string {
 	info := []string{}
 	info = append(info, "Replication")
 	info = append(info, "role:"+s.role)
@@ -363,94 +293,4 @@ func (s Server) getInfo() []string {
 		info = append(info, fmt.Sprintf("master_repl_offset:%d", s.replOffset))
 	}
 	return info
-}
-
-func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
-	result := []string{}
-
-	// Parse the header to get the number of elements in the array
-	arrLen := 0
-	header, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	header = strings.Trim(header, "\r\n")
-
-	fmt.Sscanf(header, "%d", &arrLen)
-	log.Printf("[DEBUG] array length parsed: %d", arrLen)
-
-	for i := 0; i < arrLen; i++ {
-		// Read the header of the element ($<element length>)
-		data, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		data = strings.Trim(data, "\r\n")
-		elementLen := 0
-		fmt.Sscanf(data, string(TypeBulkString)+"%d", &elementLen)
-
-		// Read the element data
-		data, err = reader.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		data = strings.Trim(data, "\r\n")
-
-		if len(data) != elementLen {
-			return nil, fmt.Errorf("error reading element: expected %d bytes, got %d",
-				elementLen, len(data))
-		}
-
-		result = append(result, data)
-	}
-
-	return result, nil
-}
-
-func (s *Server) makeSimpleError(data string) string {
-	return fmt.Sprintf("%c%s\r\n", TypeSimpleError, data)
-}
-
-func (s *Server) makeSimpleString(data string) string {
-	return fmt.Sprintf("%c%s\r\n", TypeSimpleString, data)
-}
-
-func (s *Server) readSimpleString(reader *bufio.Reader) (string, error) {
-	data, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-	data = strings.Trim(data, "\r\n")
-	return data, nil
-}
-
-func (s *Server) makeBulkString(data string) string {
-	if data == "" {
-		return fmt.Sprintf("%c\r\n\r\n", TypeBulkString)
-	}
-	return fmt.Sprintf("%c%d\r\n%s\r\n", TypeBulkString, len(data), data)
-}
-
-func (s *Server) nullBulkString() string {
-	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
-}
-
-func (s *Server) makeArray(arr []string) string {
-	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
-	for _, v := range arr {
-		result += s.makeBulkString(v)
-	}
-	return result
-}
-
-func (s *Server) makeRDBFile() (int, []byte, error) {
-	// hardcode file content for now
-	base64Content := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
-	// decode into binary
-	decoded, err := base64.StdEncoding.DecodeString(base64Content)
-	if err != nil {
-		return 0, []byte{}, err
-	}
-
-	return len(decoded), decoded, nil
 }

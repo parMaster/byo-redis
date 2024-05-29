@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var s *Server
+
+// Run the server in a goroutine
+func init() {
+	go func() {
+		s = NewServer("0.0.0.0:6379")
+		s.ListenAndServe()
+	}()
+}
+
 func Test_Ping(t *testing.T) {
 
 	conn, err := net.Dial("tcp", "0.0.0.0:6379")
@@ -167,6 +177,56 @@ func TestInfo(t *testing.T) {
 
 }
 
+func TestReplicas(t *testing.T) {
+
+	r1addr := "127.0.0.1:6395"
+	r1 := NewServer(r1addr)
+	//
+	go r1.ListenAndServe()
+	err := r1.AsSlaveOf("0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	r2addr := "127.0.0.1:6396"
+	r2 := NewServer(r2addr)
+	//
+	go r2.ListenAndServe()
+	err = r2.AsSlaveOf("0.0.0.0:6379")
+	assert.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	// check the number of replicas
+	assert.Equal(t, 2, len(s.replicas))
+
+	// check the replicas addresses and ports
+	assert.Equal(t, "127.0.0.1", s.replicas[r1addr].Addr)
+	assert.Equal(t, 6395, s.replicas[r1addr].Port)
+
+	assert.Equal(t, "127.0.0.1", s.replicas[r2addr].Addr)
+	assert.Equal(t, 6396, s.replicas[r2addr].Port)
+
+	// try to set a key in the master
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$2\r\npx\r\n$4\r\n1000\r\n"))
+	assert.Nil(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	v1, err := r1.storage.Get("foo")
+	assert.Nil(t, err)
+	assert.Equal(t, "bar", v1)
+
+	v2, err := r2.storage.Get("foo")
+	assert.Nil(t, err)
+	assert.Equal(t, "bar", v2)
+
+}
+
+//
+// Testing functions separately
+//
+
 func TestInfoSlave(t *testing.T) {
 
 	s := NewServer("0.0.0.0:6389")
@@ -192,19 +252,18 @@ func TestReplConf(t *testing.T) {
 
 	s := NewServer("0.0.0.0:6389")
 
-	// isn't configured yet
-	err := s.psyncConfig([]string{"PSYNC", "?", "-1"})
+	// wrong number of arguments
+	err := s.replConf("remote:6390", []string{"REPLCONF", "capa", "eof", "capa"})
 	assert.Error(t, err)
 
 	// REPLCONF capa eof capa psync2
-	err = s.replConf([]string{"REPLCONF", "capa", "eof", "capa", "psync2"})
+	err = s.replConf("remote:6390", []string{"REPLCONF", "capa", "eof", "capa", "psync2"})
 	assert.Nil(t, err)
 
-	assert.Contains(t, s.capabilities, "eof")
-	assert.Contains(t, s.capabilities, "psync2")
+	assert.Contains(t, s.replicas["remote:6390"].capabilities, "eof")
+	assert.Contains(t, s.replicas["remote:6390"].capabilities, "psync2")
 
 	// PSYNC ? -1
 	err = s.psyncConfig([]string{"PSYNC", "?", "-1"})
 	assert.Nil(t, err)
-
 }
