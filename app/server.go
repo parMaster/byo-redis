@@ -75,7 +75,7 @@ func (s *Server) ListenAndServe() error {
 		}
 
 		log.Printf("[INFO] New connection from: %v (%v)", conn.RemoteAddr(), conn)
-		go s.handleConnection(conn)
+		go s.handleConnection(conn, false)
 	}
 }
 
@@ -89,12 +89,13 @@ const (
 )
 
 // handleConnection will read data from the connection
-func (s *Server) handleConnection(connection net.Conn) error {
+func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 	for {
 		// Read the input
 		typeResponse, args, err := s.readInput(connection)
 		if err != nil {
 			if err.Error() == "EOF" {
+				log.Printf("[DEBUG] (EOF) reached, %v", connection)
 				connection.Close()
 				return nil
 			}
@@ -102,15 +103,17 @@ func (s *Server) handleConnection(connection net.Conn) error {
 		}
 
 		// Check the type of response
-		if typeResponse != TypeArray {
-			connection.Write([]byte(s.makeSimpleString("ERR invalid command")))
+		switch typeResponse {
+		case TypeArray:
+			// Handle the command
+			err = s.handleCommand(args, connection, silent)
+			if err != nil {
+				log.Printf("[ERROR] error handling command: %e", err)
+			}
+		default:
+			log.Printf("[DEBUG] invalid command: %v", args)
+			connection.Write([]byte(s.makeSimpleError("invalid command")))
 			continue
-		}
-
-		// Handle the command
-		err = s.handleCommand(args, connection)
-		if err != nil {
-			log.Printf("[ERROR] error handling command: %e", err)
 		}
 
 	}
@@ -152,12 +155,19 @@ func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []strin
 		log.Printf("[DEBUG] Simple string: %s", data)
 
 		return TypeSimpleString, []string{data}, nil
+	case TypeSimpleError:
+		data, err := s.readSimpleError(reader)
+		if err != nil {
+			log.Printf("[ERROR] error reading simple error: %e", err)
+		}
+		log.Printf("[DEBUG] Simple error: %s", data)
 	}
 
+	// reader.Reset(connection)
 	return TypeSimpleError, nil, fmt.Errorf("invalid command: not an array")
 }
 
-func (s *Server) handleCommand(args []string, connection net.Conn) error {
+func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) error {
 	var err error
 
 	switch strings.ToUpper(args[0]) {
@@ -195,7 +205,9 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			log.Printf("[DEBUG] Setting key %s with value %s and expiration %s\n",
 				args[1], args[2], args[4])
 			s.storage.Set(args[1], args[2], time.Millisecond*time.Duration(exp))
-			connection.Write([]byte(s.makeSimpleString("OK")))
+			if !silent {
+				connection.Write([]byte(s.makeSimpleString("OK")))
+			}
 			s.propagate(args)
 
 			return nil
@@ -204,7 +216,9 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		log.Printf("[DEBUG] Setting key %s with value %s\n", args[1], args[2])
 
 		s.storage.Set(args[1], args[2], 0)
-		connection.Write([]byte(s.makeSimpleString("OK")))
+		if !silent {
+			connection.Write([]byte(s.makeSimpleString("OK")))
+		}
 		s.propagate(args)
 
 	case "GET":
