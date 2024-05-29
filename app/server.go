@@ -103,7 +103,7 @@ func (s *Server) handleConnection(connection net.Conn) error {
 
 		// Check the type of response
 		if typeResponse != TypeArray {
-			connection.Write([]byte(s.makeSimpleString("ERR invalid command")))
+			connection.Write([]byte(s.makeSimpleError("invalid command")))
 			continue
 		}
 
@@ -152,8 +152,15 @@ func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []strin
 		log.Printf("[DEBUG] Simple string: %s", data)
 
 		return TypeSimpleString, []string{data}, nil
+	case TypeSimpleError:
+		data, err := s.readSimpleError(reader)
+		if err != nil {
+			log.Printf("[ERROR] error reading simple error: %e", err)
+		}
+		log.Printf("[DEBUG] Simple error: %s", data)
 	}
 
+	// reader.Reset(connection)
 	return TypeSimpleError, nil, fmt.Errorf("invalid command: not an array")
 }
 
