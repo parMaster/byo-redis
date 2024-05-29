@@ -154,6 +154,7 @@ func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []strin
 		return TypeSimpleString, []string{data}, nil
 	}
 
+	reader.Reset(connection)
 	return TypeSimpleError, nil, fmt.Errorf("invalid command: not an array")
 }
 

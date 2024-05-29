@@ -86,6 +86,34 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		log.Printf("[ERROR] %e", err)
 		return err
 	}
+	log.Printf("[DEBUG] Received FULLRESYNC from master (%s): %v", masterAddr, args)
+
+	go s.handleConnection(s.masterConn)
+
+	// Start the synchronization process
+	// read out $<length>\r\n<bulk data>
+	// there's no \r\n at the end of the bulk data
+	// reader := bufio.NewReader(s.masterConn)
+	// reader.ReadByte() // $
+	// strLength, err := reader.ReadString('\n')
+	// if err != nil {
+	// 	log.Printf("[ERROR] error reading length of bulk data: %e", err)
+	// 	return err
+	// }
+	// strLength = strings.Trim(strLength, "\r\n")
+	// length, err := strconv.Atoi(strLength)
+	// if err != nil {
+	// 	log.Printf("[ERROR] error parsing length of bulk data: %e", err)
+	// 	return err
+	// }
+	// log.Printf("[DEBUG] length of bulk data: %d", length)
+	// buf := make([]byte, length)
+	// n, err := reader.Read(buf)
+	// if err != nil {
+	// 	log.Printf("[ERROR] error reading bulk data: %e", err)
+	// 	return err
+	// }
+	// log.Printf("[DEBUG] %d bytes read from master", n)
 
 	return nil
 }
