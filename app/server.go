@@ -93,12 +93,15 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 	for {
 		// Read the input
 		typeResponse, args, err := s.readInput(connection)
+		log.Printf("[DEBUG] handleConnection read input, %c:%v:%e", typeResponse, args, err)
+
 		if err != nil {
 			if err.Error() == "EOF" {
 				log.Printf("[DEBUG] (EOF) reached, %v", connection)
 				connection.Close()
 				return nil
 			}
+			log.Printf("[DEBUG] handleConnection error reading input, %v", connection)
 			return err
 		}
 
@@ -110,6 +113,13 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 			if err != nil {
 				log.Printf("[ERROR] error handling command: %e", err)
 			}
+			continue
+		case TypeSimpleError:
+			log.Printf("[DEBUG] simple error received: %v", args)
+			continue
+		case TypeSimpleString:
+			log.Printf("[DEBUG] simple string received: %v", args)
+			continue
 		default:
 			log.Printf("[DEBUG] invalid command: %v", args)
 			connection.Write([]byte(s.makeSimpleError("invalid command")))
