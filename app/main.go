@@ -35,12 +35,12 @@ func main() {
 
 	// Start the server
 	if Options.ReplicaOf != "" {
-		log.Printf("[INFO] Starting as replica of %s", Options.ReplicaOf)
 		replicaOf := strings.Split(Options.ReplicaOf, " ")
 		if len(replicaOf) != 2 {
 			log.Fatalf("[ERROR] invalid replicaof option: %s, use space separated <ip> <port>", Options.ReplicaOf)
 			os.Exit(1)
 		}
+		log.Printf("[INFO] Starting as replica of %s:%s", replicaOf[0], replicaOf[1])
 		s.AsSlaveOf(net.JoinHostPort(replicaOf[0], replicaOf[1]))
 	}
 

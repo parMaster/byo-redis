@@ -25,6 +25,7 @@ type Server struct {
 	role       string
 	replId     string
 	replOffset int
+	masterConn net.Conn
 }
 
 func NewServer(addr string) *Server {
@@ -49,6 +50,16 @@ func NewServer(addr string) *Server {
 
 func (s *Server) AsSlaveOf(masterAddr string) {
 	s.role = RoleSlave
+
+	// Connect to the master
+	var err error
+	s.masterConn, err = net.Dial("tcp", masterAddr)
+	if err != nil {
+		log.Fatalf("[ERROR] error connecting to master: %e", err)
+	}
+
+	// Send PING command
+	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
 }
 
 func (s *Server) ListenAndServe() error {
@@ -228,10 +239,10 @@ func (s *Server) nullBulkString() string {
 	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
-// func (s *Server) makeArray(arr []string) string {
-// 	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
-// 	for _, v := range arr {
-// 		result += s.makeBulkString(v)
-// 	}
-// 	return result
-// }
+func (s *Server) makeArray(arr []string) string {
+	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
+	for _, v := range arr {
+		result += s.makeBulkString(v)
+	}
+	return result
+}
