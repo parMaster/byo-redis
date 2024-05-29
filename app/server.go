@@ -38,7 +38,8 @@ func NewServer(addr string) *Server {
 	}
 
 	// Generate a 40-character long replication ID
-	server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr)))[:40]
+	// server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr))) // unsopported on codecrafters hardware
+	server.replId = fmt.Sprintf("%x", crypto.SHA256.New().Sum([]byte(addr)))
 
 	return server
 }
