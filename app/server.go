@@ -235,7 +235,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		log.Printf("[DEBUG] ECHO command: %v", args)
 		if len(args) < 2 {
 			err = fmt.Errorf("wrong number of arguments for 'echo' command")
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 		connection.Write([]byte(s.makeBulkString(args[1])))
@@ -245,7 +245,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 
 		if len(args) < 3 {
 			err = fmt.Errorf("wrong number of arguments for 'set' command")
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 
@@ -253,7 +253,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			exp, err := strconv.Atoi(args[4])
 			if err != nil {
 				err = fmt.Errorf("error parsing expiration: %w", err)
-				connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+				connection.Write([]byte(s.makeSimpleError(err.Error())))
 				log.Printf("[ERROR] %e", err)
 				return err
 			}
@@ -274,7 +274,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		log.Printf("[DEBUG] GET command: %v", args)
 		if len(args) != 2 {
 			err = fmt.Errorf("wrong number of arguments for 'get' command")
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 		value, err := s.storage.Get(args[1])
@@ -288,17 +288,19 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		info := s.getInfo()
 		connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
 		log.Printf("[DEBUG] INFO command: %v", info)
+
 	case "REPLCONF":
 		err = s.replConf(args)
 		if err != nil {
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 		connection.Write([]byte(s.makeSimpleString("OK")))
+
 	case "PSYNC":
 		err = s.psyncConfig(args)
 		if err != nil {
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
@@ -307,7 +309,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 		rdbLen, rdbData, err := s.makeRDBFile()
 		if err != nil {
 			log.Printf("[ERROR] error generating RDB data: %e", err)
-			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			connection.Write([]byte(s.makeSimpleError(err.Error())))
 			return err
 		}
 		connection.Write([]byte(fmt.Sprintf("%c%d\r\n", TypeBulkString, rdbLen)))
@@ -403,6 +405,10 @@ func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 	}
 
 	return result, nil
+}
+
+func (s *Server) makeSimpleError(data string) string {
+	return fmt.Sprintf("%c%s\r\n", TypeSimpleError, data)
 }
 
 func (s *Server) makeSimpleString(data string) string {
