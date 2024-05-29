@@ -187,3 +187,24 @@ func TestInfoSlave(t *testing.T) {
 	assert.Equal(t, "Replication", info[0])
 	assert.Equal(t, "role:slave", info[1])
 }
+
+func TestReplConf(t *testing.T) {
+
+	s := NewServer("0.0.0.0:6389")
+
+	// isn't configured yet
+	err := s.psyncConfig([]string{"PSYNC", "?", "-1"})
+	assert.Error(t, err)
+
+	// REPLCONF capa eof capa psync2
+	err = s.replConf([]string{"REPLCONF", "capa", "eof", "capa", "psync2"})
+	assert.Nil(t, err)
+
+	assert.Contains(t, s.capabilities, "eof")
+	assert.Contains(t, s.capabilities, "psync2")
+
+	// PSYNC ? -1
+	err = s.psyncConfig([]string{"PSYNC", "?", "-1"})
+	assert.Nil(t, err)
+
+}

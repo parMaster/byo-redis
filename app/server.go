@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,12 +21,13 @@ const (
 )
 
 type Server struct {
-	Addr       string
-	storage    *mcache.Cache[string]
-	role       string
-	replId     string
-	replOffset int
-	masterConn net.Conn
+	Addr         string
+	storage      *mcache.Cache[string]
+	role         string
+	replId       string
+	replOffset   int
+	capabilities []string
+	masterConn   net.Conn
 }
 
 func NewServer(addr string) *Server {
@@ -99,6 +101,25 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		return err
 	}
 	if typeResponse != TypeSimpleString || args[0] != "OK" {
+		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
+		log.Printf("[ERROR] %e", err)
+		return err
+	}
+
+	// Send PSYNC ? -1 to ask for a full synchronization
+	s.masterConn.Write([]byte(s.makeArray([]string{"PSYNC", "?", "-1"})))
+	typeResponse, args, err = s.readInput(s.masterConn)
+	if err != nil {
+		log.Printf("[ERROR] error reading response from master: %e", err)
+		return err
+	}
+	if len(args) != 1 {
+		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
+		log.Printf("[ERROR] %e", err)
+		return err
+	}
+	args = strings.Split(args[0], " ") // FULLRESYNC <replid> <offset>
+	if typeResponse != TypeSimpleString || args[0] != "FULLRESYNC" {
 		err = fmt.Errorf("error connecting to master: invalid response (%v)", args)
 		log.Printf("[ERROR] %e", err)
 		return err
@@ -273,9 +294,30 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			return err
 		}
 		connection.Write([]byte(s.makeSimpleString("OK")))
+	case "PSYNC":
+		err = s.psyncConfig(args)
+		if err != nil {
+			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
+			return err
+		}
+		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
 	default:
 		connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
 	}
+	return nil
+}
+
+func (s *Server) psyncConfig(args []string) error {
+	if len(args) < 3 {
+		err := fmt.Errorf("wrong number of arguments for 'psync' command")
+		return err
+	}
+	// Further replication configuration ...
+	if !slices.Contains(s.capabilities, "psync2") {
+		err := fmt.Errorf("unsupported PSYNC capabilities")
+		return err
+	}
+
 	return nil
 }
 
@@ -285,6 +327,15 @@ func (s *Server) replConf(args []string) error {
 		return err
 	}
 	// Further replication configuration ...
+	for i := 1; i < len(args); i += 2 {
+		switch strings.ToLower(args[i]) {
+		case "listening-port":
+			// Listening port configuration
+		case "capa":
+			// Capabilities configuration
+			s.capabilities = append(s.capabilities, args[i+1])
+		}
+	}
 
 	return nil
 }
