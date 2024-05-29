@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
-	"crypto"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -39,7 +39,10 @@ func NewServer(addr string) *Server {
 
 	// Generate a 40-character long replication ID
 	// server.replId = fmt.Sprintf("%x", crypto.SHA1.New().Sum([]byte(addr))) // unsopported on codecrafters hardware
-	server.replId = fmt.Sprintf("%x", crypto.SHA256.New().Sum([]byte(addr)))
+	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
+	for range 40 {
+		server.replId += string(letters[rand.Intn(len(letters))])
+	}
 
 	return server
 }
