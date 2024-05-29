@@ -170,8 +170,8 @@ func TestInfoSlave(t *testing.T) {
 	assert.Equal(t, "role:master", info[1])
 	masterReplId := info[2]
 	log.Println(masterReplId)
-	assert.Equal(t, "master_repl_id:", info[2][:15])
-	assert.Equal(t, 15+40, len(masterReplId))
+	assert.Equal(t, "master_replid:", info[2][:14])
+	assert.Equal(t, 14+40, len(masterReplId))
 	assert.Equal(t, "master_repl_offset:0", info[3])
 
 	s.AsSlaveOf("0.0.0.0:6379")

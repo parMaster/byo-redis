@@ -166,7 +166,7 @@ func (s Server) getInfo() []string {
 	info = append(info, "Replication")
 	info = append(info, "role:"+s.role)
 	if s.role == RoleMaster {
-		info = append(info, fmt.Sprintf("master_repl_id:%s", s.replId))
+		info = append(info, fmt.Sprintf("master_replid:%s", s.replId))
 		info = append(info, fmt.Sprintf("master_repl_offset:%d", s.replOffset))
 	}
 	return info
