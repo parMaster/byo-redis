@@ -301,7 +301,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			connection.Write([]byte(s.makeSimpleString("ERR " + err.Error())))
 			return err
 		}
-		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
+		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d\r\n", s.replId, s.replOffset))))
 
 		// Send RDB data
 		rdbData, err := s.makeRDBString()
