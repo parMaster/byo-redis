@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"log"
 	"net"
 	"strings"
@@ -19,6 +18,7 @@ func init() {
 		s = NewServer("0.0.0.0:6379")
 		s.ListenAndServe()
 	}()
+	time.Sleep(time.Second)
 }
 
 func Test_Ping(t *testing.T) {
@@ -178,23 +178,116 @@ func TestInfo(t *testing.T) {
 
 }
 
-func TestReplicas(t *testing.T) {
+func TestServer(t *testing.T) {
+	t.Skip("skipping TestServer")
+	s = NewServer("0.0.0.0:6370")
+	err := s.ListenAndServe()
+	assert.Nil(t, err)
+}
+
+// Stream multiple SETs in one go
+func TestStream(t *testing.T) {
+
+	if s == nil {
+		s = NewServer("0.0.0.0:6379")
+		go func() {
+			err := s.ListenAndServe()
+			assert.Nil(t, err)
+		}()
+	}
+
+	time.Sleep(time.Second)
+
+	// stream three keys to master
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n123\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n456\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	v1, err := s.storage.Get("foo")
+	assert.Nil(t, err)
+	assert.Equal(t, "123", v1)
+
+	v1, err = s.storage.Get("bar")
+	assert.Nil(t, err)
+	assert.Equal(t, "456", v1)
+
+	v1, err = s.storage.Get("baz")
+	assert.Nil(t, err)
+	assert.Equal(t, "789", v1)
+
+}
+
+// Test the replication of a single replica
+func TestOneReplica(t *testing.T) {
+	time.Sleep(time.Second)
 
 	r1addr := "127.0.0.1:6395"
 	r1 := NewServer(r1addr)
 	//
-	go r1.ListenAndServe()
 	err := r1.AsSlaveOf("0.0.0.0:6379")
+	go r1.ListenAndServe()
+	assert.Nil(t, err)
+
+	// check the number of replicas
+	assert.Equal(t, 1, len(s.replicas))
+
+	// check the replicas addresses and ports
+	assert.Equal(t, "127.0.0.1", s.replicas[r1addr].Addr)
+	assert.Equal(t, 6395, s.replicas[r1addr].Port)
+
+	// try to set a key in the master
+	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n123\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n456\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
+	assert.Nil(t, err)
+
+	time.Sleep(4 * time.Second)
+
+	v1, err := r1.storage.Get("foo")
+	assert.Nil(t, err)
+	assert.Equal(t, "123", v1)
+
+	v1, err = r1.storage.Get("bar")
+	assert.Nil(t, err)
+	assert.Equal(t, "456", v1)
+
+	v1, err = r1.storage.Get("baz")
+	assert.Nil(t, err)
+	assert.Equal(t, "789", v1)
+
+}
+
+// Replication with multiple replicas
+func TestReplicas(t *testing.T) {
+
+	time.Sleep(time.Second)
+
+	r1addr := "127.0.0.1:6395"
+	r1 := NewServer(r1addr)
+	//
+	err := r1.AsSlaveOf("0.0.0.0:6379")
+	go r1.ListenAndServe()
 	assert.Nil(t, err)
 
 	r2addr := "127.0.0.1:6396"
 	r2 := NewServer(r2addr)
 	//
-	go r2.ListenAndServe()
 	err = r2.AsSlaveOf("0.0.0.0:6379")
+	go r2.ListenAndServe()
 	assert.Nil(t, err)
 
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
 
 	// check the number of replicas
 	assert.Equal(t, 2, len(s.replicas))
@@ -209,19 +302,14 @@ func TestReplicas(t *testing.T) {
 	// try to set a key in the master
 	conn, err := net.Dial("tcp", "0.0.0.0:6379")
 	assert.Nil(t, err)
-	// buf := make([]byte, 1024)
-	reader := bufio.NewReader(conn)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n123\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
-	reader.ReadLine()
 	assert.Nil(t, err)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n456\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
-	reader.ReadLine()
 	assert.Nil(t, err)
 	_, err = conn.Write([]byte("*5\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n$2\r\npx\r\n$4\r\n5000\r\n"))
 	assert.Nil(t, err)
-	reader.ReadLine()
 
-	time.Sleep(time.Second)
+	time.Sleep(4 * time.Second)
 
 	v1, err := r1.storage.Get("foo")
 	assert.Nil(t, err)

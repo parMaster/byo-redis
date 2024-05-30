@@ -3,6 +3,7 @@ package main
 // Methods specific to replication handling
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -23,9 +24,11 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		log.Fatalf("[ERROR] error connecting to master: %e", err)
 	}
 
+	reader := bufio.NewReader(s.masterConn)
+
 	// Send PING command
 	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
-	typeResponse, args, err := s.readInput(s.masterConn)
+	typeResponse, args, err := s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -44,7 +47,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		return err
 	}
 	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "listening-port", port})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -57,7 +60,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 
 	// Send REPLCONF capa psync2
 	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "capa", "psync2"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -70,7 +73,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 
 	// Send PSYNC ? -1 to ask for a full synchronization
 	s.masterConn.Write([]byte(s.makeArray([]string{"PSYNC", "?", "-1"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -88,34 +91,76 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 	}
 	log.Printf("[DEBUG] Received FULLRESYNC from master (%s): %v", masterAddr, args)
 
-	go s.handleConnection(s.masterConn, true)
-
 	// Start the synchronization process
 	// read out $<length>\r\n<bulk data>
 	// there's no \r\n at the end of the bulk data
-	// reader := bufio.NewReader(s.masterConn)
-	// reader.ReadByte() // $
-	// strLength, err := reader.ReadString('\n')
-	// if err != nil {
-	// 	log.Printf("[ERROR] error reading length of bulk data: %e", err)
-	// 	return err
-	// }
-	// strLength = strings.Trim(strLength, "\r\n")
-	// length, err := strconv.Atoi(strLength)
-	// if err != nil {
-	// 	log.Printf("[ERROR] error parsing length of bulk data: %e", err)
-	// 	return err
-	// }
-	// log.Printf("[DEBUG] length of bulk data: %d", length)
-	// buf := make([]byte, length)
-	// n, err := reader.Read(buf)
-	// if err != nil {
-	// 	log.Printf("[ERROR] error reading bulk data: %e", err)
-	// 	return err
-	// }
-	// log.Printf("[DEBUG] %d bytes read from master", n)
+	reader.ReadByte() // $
+	strLength, err := reader.ReadString('\n')
+	if err != nil {
+		log.Printf("[ERROR] error reading length of bulk data: %e", err)
+		return err
+	}
+	strLength = strings.Trim(strLength, "\r\n")
+	length, err := strconv.Atoi(strLength)
+	if err != nil {
+		log.Printf("[ERROR] error parsing length of bulk data: %e", err)
+		return err
+	}
+	log.Printf("[DEBUG] length of bulk data: %d", length)
+	buf := make([]byte, length)
+	n, err := reader.Read(buf)
+	if err != nil {
+		log.Printf("[ERROR] error reading bulk data: %e", err)
+		return err
+	}
+	log.Printf("[DEBUG] %d bytes read from master", n)
+
+	go s.handleReplication(s.masterConn, reader)
 
 	return nil
+}
+
+// handleReplication reads the input from the master and handles the replication
+// reusing the same connection and reader
+func (s *Server) handleReplication(connection net.Conn, reader *bufio.Reader) error {
+	silent := true
+	for {
+		// Read the input
+		typeResponse, args, err := s.readInput(reader)
+		log.Printf("[DEBUG] [repl] handleReplication input parsed, %c:%v:%e, &%v",
+			typeResponse, args, err, connection)
+
+		if err != nil {
+			if err.Error() == "EOF" {
+				log.Printf("[DEBUG] (EOF) reached, %v", connection)
+				connection.Close()
+				return nil
+			}
+			log.Printf("[DEBUG] [repl] handleReplication error reading input, %v", connection)
+			return err
+		}
+
+		// Check the type of response
+		switch typeResponse {
+		case TypeArray:
+			// Handle the command
+			err = s.handleCommand(args, connection, silent)
+			if err != nil {
+				log.Printf("[ERROR] [repl] error handling command: %e", err)
+			}
+			continue
+		case TypeSimpleError:
+			log.Printf("[DEBUG] [repl] simple error received: %v", args)
+			continue
+		case TypeSimpleString:
+			log.Printf("[DEBUG] [repl] simple string received: %v", args)
+			continue
+		default:
+			log.Printf("[DEBUG] [repl], invalid command: %v", args)
+			continue
+		}
+
+	}
 }
 
 func (s *Server) psyncConfig(args []string) error {
@@ -171,7 +216,7 @@ func (s *Server) replConf(replAddr string, args []string) error {
 func (s *Server) propagate(args []string) error {
 
 	for ra, repl := range s.replicas {
-		log.Printf("[DEBUG] Propagating to %s, args: %v", ra, args)
+		log.Printf("[DEBUG] -> Propagating to %s, args: %v", ra, args)
 		n, err := repl.conn.Write([]byte(s.makeArray(args)))
 		if err != nil {
 			log.Printf("[ERROR] error writing to replica %s: %e, trying to reconnect", ra, err)

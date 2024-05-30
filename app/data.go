@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -24,7 +23,7 @@ func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 	header = strings.Trim(header, "\r\n")
 
 	fmt.Sscanf(header, "%d", &arrLen)
-	log.Printf("[DEBUG] array length parsed: %d", arrLen)
+	// log.Printf("[DEBUG] array length parsed: %d", arrLen)
 
 	for i := 0; i < arrLen; i++ {
 		// Read the header of the element ($<element length>)
