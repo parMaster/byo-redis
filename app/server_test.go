@@ -381,3 +381,49 @@ func TestReplConf(t *testing.T) {
 	err = s.psyncConfig([]string{"PSYNC", "?", "-1"})
 	assert.Nil(t, err)
 }
+
+// // sendACK sends REPLCONF GETACK * from server to replica
+// func (s *Server) sendACK(conn net.Conn) (string, error) {
+// 	// REPLCONF GETACK *
+// 	conn.Write([]byte(s.RESPArray([]string{"REPLCONF", "GETACK", "*"})))
+
+// 	// read response
+// 	buff := make([]byte, 1024)
+// 	n, err := conn.Read(buff)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	return string(buff[:n]), nil
+// }
+
+// // sendPing sends PING from server to replica
+// func (s *Server) sendPing(conn net.Conn, reader *bufio.Reader) ([]string, error) {
+// 	// PING
+// 	conn.Write([]byte(s.RESPArray([]string{"PING"})))
+// 	return s.readArray(reader)
+// }
+
+// // Test the replication of a single replica
+// func TestGetACK(t *testing.T) {
+// 	time.Sleep(time.Second)
+
+// 	r1addr := "127.0.0.1:6395"
+// 	r1 := NewServer(r1addr)
+// 	//
+// 	err := r1.AsSlaveOf("0.0.0.0:6379")
+// 	// go r1.ListenAndServe()
+// 	assert.Nil(t, err)
+
+// 	time.Sleep(1 * time.Second)
+
+// 	resp, err := s.sendACK(s.replicas[r1addr].conn)
+// 	assert.Nil(t, err)
+// 	log.Println(resp)
+
+// 	// resp, err = s.sendACK(s.replicas[r1addr].conn, reader)
+// 	// assert.Nil(t, err)
+// 	// assert.Equal(t, "REPLCONF", resp[0])
+// 	// assert.Equal(t, "ACK", resp[1])
+// 	// assert.Equal(t, "37", resp[2])
+
+// }

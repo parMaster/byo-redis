@@ -24,7 +24,7 @@ type Replica struct {
 	Addr string
 	Port int
 	// replId       string
-	// replOffset   int
+	offset       int
 	conn         net.Conn
 	capabilities []string
 }
@@ -255,6 +255,25 @@ func (s *Server) handleCommand(args []string, connection net.Conn) error {
 			err = fmt.Errorf("REPLCONF command is only valid for master servers")
 			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
+		}
+
+		if len(args) == 3 && strings.ToUpper(args[1]) == "ACK" {
+			log.Printf("[DEBUG] [%s] REPLCONF command: %v", s.role, args)
+			offset, err := strconv.Atoi(args[2])
+			if err != nil {
+				err = fmt.Errorf("error parsing offset: %w", err)
+				connection.Write([]byte(s.RESPSimpleError(err.Error())))
+				log.Printf("[ERROR] %e", err)
+				return err
+			}
+
+			s.mx.Lock()
+			if repl, ok := s.replicas[connection.RemoteAddr().String()]; ok {
+				repl.offset = offset
+				s.replicas[connection.RemoteAddr().String()] = repl
+			}
+			s.mx.Unlock()
+			return nil
 		}
 
 		s.mx.Lock()
