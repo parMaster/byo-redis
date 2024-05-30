@@ -111,7 +111,7 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 		switch typeResponse {
 		case TypeArray:
 			// Handle the command
-			err = s.handleCommand(args, connection, silent)
+			err = s.handleCommand(args, connection)
 			if err != nil {
 				log.Printf("[ERROR] error handling command: %e", err)
 			}
@@ -125,7 +125,7 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 		default:
 			log.Printf("[DEBUG] [%s], invalid command: %v", s.role, args)
 			if !silent {
-				connection.Write([]byte(s.makeSimpleError("invalid command")))
+				connection.Write([]byte(s.RESPSimpleError("invalid command")))
 			}
 			continue
 		}
@@ -181,37 +181,29 @@ func (s *Server) readInput(reader *bufio.Reader) (typeResponse rune, args []stri
 	return TypeSimpleError, nil, fmt.Errorf("\"%c\" type not supported", cmd)
 }
 
-func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) error {
+func (s *Server) handleCommand(args []string, connection net.Conn) error {
 	var err error
 
 	switch strings.ToUpper(args[0]) {
 	case "PING":
 		log.Printf("[DEBUG] [%s] PING command: %v", s.role, args)
-		if !silent {
-			connection.Write([]byte(s.makeSimpleString("PONG")))
-		}
+		connection.Write([]byte(s.RESPSimpleString("PONG")))
 
 	case "ECHO":
 		log.Printf("[DEBUG] [%s] ECHO command: %v", s.role, args)
 		if len(args) < 2 {
 			err = fmt.Errorf("wrong number of arguments for 'echo' command")
-			if !silent {
-				connection.Write([]byte(s.makeSimpleError(err.Error())))
-			}
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
-		if !silent {
-			connection.Write([]byte(s.makeBulkString(args[1])))
-		}
+		connection.Write([]byte(s.RESPBulkString(args[1])))
 
 	case "SET":
 		log.Printf("[DEBUG] [%s] SET command: %v", s.role, args)
 
 		if len(args) < 3 {
 			err = fmt.Errorf("wrong number of arguments for 'set' command")
-			if !silent {
-				connection.Write([]byte(s.makeSimpleError(err.Error())))
-			}
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
 
@@ -219,9 +211,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 			exp, err := strconv.Atoi(args[4])
 			if err != nil {
 				err = fmt.Errorf("error parsing expiration: %w", err)
-				if !silent {
-					connection.Write([]byte(s.makeSimpleError(err.Error())))
-				}
+				connection.Write([]byte(s.RESPSimpleError(err.Error())))
 				log.Printf("[ERROR] %e", err)
 				return err
 			}
@@ -229,9 +219,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 			log.Printf("[DEBUG] [%s] Setting key %s with value %s and expiration %s\n",
 				s.role, args[1], args[2], args[4])
 			s.storage.Set(args[1], args[2], time.Millisecond*time.Duration(exp))
-			if !silent {
-				connection.Write([]byte(s.makeSimpleString("OK")))
-			}
+			connection.Write([]byte(s.RESPSimpleString("OK")))
 			s.propagate(args)
 
 			return nil
@@ -240,16 +228,14 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 		log.Printf("[DEBUG] [%s] Setting key %s with value %s\n", s.role, args[1], args[2])
 
 		s.storage.Set(args[1], args[2], 0)
-		if !silent {
-			connection.Write([]byte(s.makeSimpleString("OK")))
-		}
+		connection.Write([]byte(s.RESPSimpleString("OK")))
 		s.propagate(args)
 
 	case "GET":
 		log.Printf("[DEBUG] [%s] GET command: %v", s.role, args)
 		if len(args) != 2 {
 			err = fmt.Errorf("wrong number of arguments for 'get' command")
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
 		value, err := s.storage.Get(args[1])
@@ -257,17 +243,17 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 			connection.Write([]byte(s.nullBulkString()))
 			return nil
 		}
-		connection.Write([]byte(s.makeBulkString(value)))
+		connection.Write([]byte(s.RESPBulkString(value)))
 
 	case "INFO":
 		info := s.getInfo()
-		connection.Write([]byte(s.makeBulkString(strings.Join(info, "\r\n"))))
+		connection.Write([]byte(s.RESPBulkString(strings.Join(info, "\r\n"))))
 		log.Printf("[DEBUG] INFO command: %v", info)
 
 	case "REPLCONF":
 		if s.role != RoleMaster {
 			err = fmt.Errorf("REPLCONF command is only valid for master servers")
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
 
@@ -276,7 +262,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 		replAddr := connection.RemoteAddr().String()
 		err = s.replConf(replAddr, args)
 		if err != nil {
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
 
@@ -286,15 +272,15 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 		}
 		s.mx.Unlock()
 
-		connection.Write([]byte(s.makeSimpleString("OK")))
+		connection.Write([]byte(s.RESPSimpleString("OK")))
 
 	case "PSYNC":
 		err = s.psyncConfig(args)
 		if err != nil {
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
-		connection.Write([]byte(s.makeSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
+		connection.Write([]byte(s.RESPSimpleString(fmt.Sprintf("FULLRESYNC %s %d", s.replId, s.replOffset))))
 
 		// handshake is complete, replace temp session ID with the actual replica address
 		s.mx.Lock()
@@ -310,14 +296,14 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 		rdbLen, rdbData, err := s.makeRDBFile()
 		if err != nil {
 			log.Printf("[ERROR] error generating RDB data: %e", err)
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			connection.Write([]byte(s.RESPSimpleError(err.Error())))
 			return err
 		}
 		connection.Write([]byte(fmt.Sprintf("%c%d\r\n", TypeBulkString, rdbLen)))
 		connection.Write(rdbData)
 
 	default:
-		connection.Write([]byte(s.makeSimpleString("ERR unknown command")))
+		connection.Write([]byte(s.RESPSimpleString("ERR unknown command")))
 	}
 	return nil
 }
