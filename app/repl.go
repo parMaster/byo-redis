@@ -194,7 +194,9 @@ func (s *Server) handleReplCommand(args []string, connection net.Conn) error {
 		log.Printf("[DEBUG] [%s] Setting key %s with value %s\n", s.role, args[1], args[2])
 
 		s.storage.Set(args[1], args[2], 0)
-		s.propagate(args)
+
+		s.replOffset += len(s.RESPArray(args))
+		log.Printf("[DEBUG] [%s] replOffset: %d", s.role, s.replOffset)
 
 	case "REPLCONF":
 
@@ -207,9 +209,12 @@ func (s *Server) handleReplCommand(args []string, connection net.Conn) error {
 
 		// REPLCONF GETACK *
 		if strings.ToUpper(args[1]) == "GETACK" && args[2] == "*" {
-			// REPLCONF ACK 0
-			connection.Write([]byte(s.RESPArray([]string{"REPLCONF", "ACK", "0"})))
+			// REPLCONF ACK <offset>
+			connection.Write([]byte(s.RESPArray([]string{"REPLCONF", "ACK", strconv.Itoa(s.replOffset)})))
 		}
+
+		s.replOffset += len(s.RESPArray(args))
+		log.Printf("[DEBUG] [%s] replOffset: %d", s.role, s.replOffset)
 
 	default:
 		connection.Write([]byte(s.RESPSimpleError("unknown command")))
