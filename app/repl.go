@@ -171,7 +171,7 @@ func (s *Server) replConf(replAddr string, args []string) error {
 func (s *Server) propagate(args []string) error {
 
 	for ra, repl := range s.replicas {
-		log.Printf("[DEBUG] Propagating to %s, args: %v", ra, args)
+		log.Printf("[DEBUG] -> Propagating to %s, args: %v", ra, args)
 		n, err := repl.conn.Write([]byte(s.makeArray(args)))
 		if err != nil {
 			log.Printf("[ERROR] error writing to replica %s: %e, trying to reconnect", ra, err)
