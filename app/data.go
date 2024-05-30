@@ -53,8 +53,8 @@ func (s *Server) readArray(reader *bufio.Reader) ([]string, error) {
 	return result, nil
 }
 
-// makeSimpleError returns a simple error response
-func (s *Server) makeSimpleError(data string) string {
+// RESPSimpleError returns a simple error response
+func (s *Server) RESPSimpleError(data string) string {
 	return fmt.Sprintf("%c%s\r\n", TypeSimpleError, data)
 }
 
@@ -68,8 +68,8 @@ func (s *Server) readSimpleError(reader *bufio.Reader) (string, error) {
 	return data, nil
 }
 
-// makeSimpleString returns a simple string response
-func (s *Server) makeSimpleString(data string) string {
+// RESPSimpleString returns a simple string response
+func (s *Server) RESPSimpleString(data string) string {
 	return fmt.Sprintf("%c%s\r\n", TypeSimpleString, data)
 }
 
@@ -83,8 +83,8 @@ func (s *Server) readSimpleString(reader *bufio.Reader) (string, error) {
 	return data, nil
 }
 
-// makeBulkString returns a bulk string response
-func (s *Server) makeBulkString(data string) string {
+// RESPBulkString returns a bulk string response
+func (s *Server) RESPBulkString(data string) string {
 	if data == "" {
 		return fmt.Sprintf("%c\r\n\r\n", TypeBulkString)
 	}
@@ -96,11 +96,11 @@ func (s *Server) nullBulkString() string {
 	return fmt.Sprintf("%c-1\r\n", TypeBulkString)
 }
 
-// makeArray returns an array response
-func (s *Server) makeArray(arr []string) string {
+// RESPArray returns an array response
+func (s *Server) RESPArray(arr []string) string {
 	result := fmt.Sprintf("%c%d\r\n", TypeArray, len(arr))
 	for _, v := range arr {
-		result += s.makeBulkString(v)
+		result += s.RESPBulkString(v)
 	}
 	return result
 }

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // AsSlaveOf sets the server as a slave of the given master
@@ -27,7 +28,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 	reader := bufio.NewReader(s.masterConn)
 
 	// Send PING command
-	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
+	s.masterConn.Write([]byte(s.RESPArray([]string{"PING"})))
 	typeResponse, args, err := s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
@@ -46,7 +47,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		log.Printf("[ERROR] error parsing server address: %e", err)
 		return err
 	}
-	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "listening-port", port})))
+	s.masterConn.Write([]byte(s.RESPArray([]string{"REPLCONF", "listening-port", port})))
 	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
@@ -59,7 +60,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 	}
 
 	// Send REPLCONF capa psync2
-	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "capa", "psync2"})))
+	s.masterConn.Write([]byte(s.RESPArray([]string{"REPLCONF", "capa", "psync2"})))
 	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
@@ -72,7 +73,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 	}
 
 	// Send PSYNC ? -1 to ask for a full synchronization
-	s.masterConn.Write([]byte(s.makeArray([]string{"PSYNC", "?", "-1"})))
+	s.masterConn.Write([]byte(s.RESPArray([]string{"PSYNC", "?", "-1"})))
 	typeResponse, args, err = s.readInput(reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
@@ -123,7 +124,6 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 // handleReplication reads the input from the master and handles the replication
 // reusing the same connection and reader
 func (s *Server) handleReplication(connection net.Conn, reader *bufio.Reader) error {
-	silent := true
 	for {
 		// Read the input
 		typeResponse, args, err := s.readInput(reader)
@@ -140,11 +140,9 @@ func (s *Server) handleReplication(connection net.Conn, reader *bufio.Reader) er
 			return err
 		}
 
-		// Check the type of response
 		switch typeResponse {
 		case TypeArray:
-			// Handle the command
-			err = s.handleCommand(args, connection, silent)
+			err = s.handleReplCommand(args, connection)
 			if err != nil {
 				log.Printf("[ERROR] [repl] error handling command: %e", err)
 			}
@@ -163,6 +161,62 @@ func (s *Server) handleReplication(connection net.Conn, reader *bufio.Reader) er
 	}
 }
 
+// handleReplCommand handles the replication commands over the connection to the master.
+// SET happens silently without propagation, no response is sent back to the master.
+// Implements REPLCONF GETACK * and so on
+func (s *Server) handleReplCommand(args []string, connection net.Conn) error {
+	var err error
+
+	switch strings.ToUpper(args[0]) {
+
+	case "SET":
+		log.Printf("[DEBUG] [%s] SET command: %v", s.role, args)
+
+		if len(args) < 3 {
+			err = fmt.Errorf("wrong number of arguments for 'set' command")
+			return err
+		}
+
+		if len(args) == 5 && strings.ToUpper(args[3]) == "PX" {
+			exp, err := strconv.Atoi(args[4])
+			if err != nil {
+				err = fmt.Errorf("error parsing expiration: %w", err)
+				log.Printf("[ERROR] %e", err)
+				return err
+			}
+			// Set with expiration
+			log.Printf("[DEBUG] [%s] Setting key %s with value %s and expiration %s\n",
+				s.role, args[1], args[2], args[4])
+			s.storage.Set(args[1], args[2], time.Millisecond*time.Duration(exp))
+			return nil
+		}
+		// Set without expiration
+		log.Printf("[DEBUG] [%s] Setting key %s with value %s\n", s.role, args[1], args[2])
+
+		s.storage.Set(args[1], args[2], 0)
+		s.propagate(args)
+
+	case "REPLCONF":
+
+		log.Printf("[DEBUG] [%s] REPLCONF command: %v", s.role, args)
+
+		if len(args) < 3 {
+			err = fmt.Errorf("wrong number of arguments for 'replconf' command")
+			return err
+		}
+
+		// REPLCONF GETACK *
+		if strings.ToUpper(args[1]) == "GETACK" && args[2] == "*" {
+			// REPLCONF ACK 0
+			connection.Write([]byte(s.RESPArray([]string{"REPLCONF", "ACK", "0"})))
+		}
+
+	default:
+		connection.Write([]byte(s.RESPSimpleError("unknown command")))
+	}
+	return nil
+}
+
 func (s *Server) psyncConfig(args []string) error {
 	if len(args) < 3 {
 		err := fmt.Errorf("wrong number of arguments for 'psync' command")
@@ -177,6 +231,7 @@ func (s *Server) psyncConfig(args []string) error {
 	return nil
 }
 
+// Server configuration for replication
 func (s *Server) replConf(replAddr string, args []string) error {
 	if len(args) < 3 || len(args)%2 != 1 {
 		err := fmt.Errorf("wrong number of arguments for 'replconf' command")
@@ -217,7 +272,7 @@ func (s *Server) propagate(args []string) error {
 
 	for ra, repl := range s.replicas {
 		log.Printf("[DEBUG] -> Propagating to %s, args: %v", ra, args)
-		n, err := repl.conn.Write([]byte(s.makeArray(args)))
+		n, err := repl.conn.Write([]byte(s.RESPArray(args)))
 		if err != nil {
 			log.Printf("[ERROR] error writing to replica %s: %e, trying to reconnect", ra, err)
 			// try to reconnect
@@ -228,7 +283,7 @@ func (s *Server) propagate(args []string) error {
 			}
 			repl.conn = conn
 			s.replicas[ra] = repl
-			n, err = repl.conn.Write([]byte(s.makeArray(args)))
+			n, err = repl.conn.Write([]byte(s.RESPArray(args)))
 			if err != nil {
 				log.Printf("[ERROR] error writing to reconnected replica %s: %e", ra, err)
 				continue
