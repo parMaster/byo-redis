@@ -6,7 +6,7 @@ Golang implementation of the redis server for the CodeCrafters Redis Challenge.
 ## Features
 Supports `GET`, `PING`, `SET`, `INFO` commands for Redis protocol. Can work with multiple replicas and supports simple propagation of data from master to replicas.
 
-## Thigs I learned from this challenge
+## Things I learned from this challenge
 - How to use `net` package to create a TCP server and client in Go.
 - How redis protocol works, basic knowledge of redis replication principles (`REPLCONF`, `PSYNC` commands) and how to implement them. Including handshake, data propagation to replicas.
 - How to implement client-server (master-replicas) communication using TCP sockets and redis protocol.
