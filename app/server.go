@@ -93,12 +93,16 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 	for {
 		// Read the input
 		typeResponse, args, err := s.readInput(connection)
+		log.Printf("[DEBUG] [%s] handleConnection input parsed, %c:%v:%e",
+			s.role, typeResponse, args, err)
+
 		if err != nil {
 			if err.Error() == "EOF" {
 				log.Printf("[DEBUG] (EOF) reached, %v", connection)
 				connection.Close()
 				return nil
 			}
+			log.Printf("[DEBUG] [%s] handleConnection error reading input, %v", s.role, connection)
 			return err
 		}
 
@@ -110,9 +114,18 @@ func (s *Server) handleConnection(connection net.Conn, silent bool) error {
 			if err != nil {
 				log.Printf("[ERROR] error handling command: %e", err)
 			}
+			continue
+		case TypeSimpleError:
+			log.Printf("[DEBUG] [%s] simple error received: %v", s.role, args)
+			continue
+		case TypeSimpleString:
+			log.Printf("[DEBUG] [%s] simple string received: %v", s.role, args)
+			continue
 		default:
-			log.Printf("[DEBUG] invalid command: %v", args)
-			connection.Write([]byte(s.makeSimpleError("invalid command")))
+			log.Printf("[DEBUG] [%s], invalid command: %v", s.role, args)
+			if !silent {
+				connection.Write([]byte(s.makeSimpleError("invalid command")))
+			}
 			continue
 		}
 
@@ -132,6 +145,8 @@ func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []strin
 			return TypeSimpleError, nil, err
 		}
 	}
+
+	log.Printf("[DEBUG] readInput cmd: %c", cmd)
 
 	switch cmd {
 	case TypeArray:
@@ -161,6 +176,9 @@ func (s *Server) readInput(connection net.Conn) (typeResponse rune, args []strin
 			log.Printf("[ERROR] error reading simple error: %e", err)
 		}
 		log.Printf("[DEBUG] Simple error: %s", data)
+		return TypeSimpleError, []string{data}, nil
+	default:
+
 	}
 
 	// reader.Reset(connection)
@@ -172,24 +190,32 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 
 	switch strings.ToUpper(args[0]) {
 	case "PING":
-		log.Printf("[DEBUG] PING command: %v", args)
-		connection.Write([]byte(s.makeSimpleString("PONG")))
+		log.Printf("[DEBUG] [%s] PING command: %v", s.role, args)
+		if !silent {
+			connection.Write([]byte(s.makeSimpleString("PONG")))
+		}
 
 	case "ECHO":
-		log.Printf("[DEBUG] ECHO command: %v", args)
+		log.Printf("[DEBUG] [%s] ECHO command: %v", s.role, args)
 		if len(args) < 2 {
 			err = fmt.Errorf("wrong number of arguments for 'echo' command")
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			if !silent {
+				connection.Write([]byte(s.makeSimpleError(err.Error())))
+			}
 			return err
 		}
-		connection.Write([]byte(s.makeBulkString(args[1])))
+		if !silent {
+			connection.Write([]byte(s.makeBulkString(args[1])))
+		}
 
 	case "SET":
-		log.Printf("[DEBUG] SET command: %v", args)
+		log.Printf("[DEBUG] [%s] SET command: %v", s.role, args)
 
 		if len(args) < 3 {
 			err = fmt.Errorf("wrong number of arguments for 'set' command")
-			connection.Write([]byte(s.makeSimpleError(err.Error())))
+			if !silent {
+				connection.Write([]byte(s.makeSimpleError(err.Error())))
+			}
 			return err
 		}
 
@@ -197,7 +223,9 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 			exp, err := strconv.Atoi(args[4])
 			if err != nil {
 				err = fmt.Errorf("error parsing expiration: %w", err)
-				connection.Write([]byte(s.makeSimpleError(err.Error())))
+				if !silent {
+					connection.Write([]byte(s.makeSimpleError(err.Error())))
+				}
 				log.Printf("[ERROR] %e", err)
 				return err
 			}
@@ -222,7 +250,7 @@ func (s *Server) handleCommand(args []string, connection net.Conn, silent bool) 
 		s.propagate(args)
 
 	case "GET":
-		log.Printf("[DEBUG] GET command: %v", args)
+		log.Printf("[DEBUG] [%s] GET command: %v", s.role, args)
 		if len(args) != 2 {
 			err = fmt.Errorf("wrong number of arguments for 'get' command")
 			connection.Write([]byte(s.makeSimpleError(err.Error())))
