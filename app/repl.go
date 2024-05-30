@@ -3,6 +3,7 @@ package main
 // Methods specific to replication handling
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -23,9 +24,11 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		log.Fatalf("[ERROR] error connecting to master: %e", err)
 	}
 
+	reader := bufio.NewReader(s.masterConn)
+
 	// Send PING command
 	s.masterConn.Write([]byte(s.makeArray([]string{"PING"})))
-	typeResponse, args, err := s.readInput(s.masterConn)
+	typeResponse, args, err := s.readInput(s.masterConn, reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -44,7 +47,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 		return err
 	}
 	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "listening-port", port})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(s.masterConn, reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -57,7 +60,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 
 	// Send REPLCONF capa psync2
 	s.masterConn.Write([]byte(s.makeArray([]string{"REPLCONF", "capa", "psync2"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(s.masterConn, reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -70,7 +73,7 @@ func (s *Server) AsSlaveOf(masterAddr string) error {
 
 	// Send PSYNC ? -1 to ask for a full synchronization
 	s.masterConn.Write([]byte(s.makeArray([]string{"PSYNC", "?", "-1"})))
-	typeResponse, args, err = s.readInput(s.masterConn)
+	typeResponse, args, err = s.readInput(s.masterConn, reader)
 	if err != nil {
 		log.Printf("[ERROR] error reading response from master: %e", err)
 		return err
@@ -171,7 +174,7 @@ func (s *Server) replConf(replAddr string, args []string) error {
 func (s *Server) propagate(args []string) error {
 
 	for ra, repl := range s.replicas {
-		log.Printf("[DEBUG] Propagating to %s, args: %v", ra, args)
+		log.Printf("[DEBUG] -> Propagating to %s, args: %v", ra, args)
 		n, err := repl.conn.Write([]byte(s.makeArray(args)))
 		if err != nil {
 			log.Printf("[ERROR] error writing to replica %s: %e, trying to reconnect", ra, err)

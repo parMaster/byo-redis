@@ -26,6 +26,7 @@ func main() {
 	logOpts := []lgr.Option{
 		lgr.LevelBraces,
 		lgr.StackTraceOnError,
+		lgr.Msec,
 	}
 	logOpts = append(logOpts, lgr.Debug)
 	lgr.SetupStdLogger(logOpts...)
