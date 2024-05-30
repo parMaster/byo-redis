@@ -1,34 +1,18 @@
 [![progress-banner](https://backend.codecrafters.io/progress/redis/ac455f08-a075-4a3a-a72b-553df7d15520)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
 
-This is a starting point for Go solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+# CodeCrafters Redis Challenge
+Golang implementation of the redis server for the CodeCrafters Redis Challenge.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## Features
+Supports `GET`, `PING`, `SET`, `INFO` commands for Redis protocol. Can work with multiple replicas and supports simple propagation of data from master to replicas.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
-
-# Passing the first stage
-
-The entry point for your Redis implementation is in `app/server.go`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
-
-```sh
-git add .
-git commit -m "pass 1st stage" # any msg
-git push origin master
-```
-
-That's all!
-
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `go (1.19)` installed locally
-1. Run `./spawn_redis_server.sh` to run your Redis server, which is implemented
-   in `app/server.go`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+## Thigs I learned from this challenge
+- How to use `net` package to create a TCP server and client in Go.
+- How redis protocol works, basic knowledge of redis replication principles (`REPLCONF`, `PSYNC` commands) and how to implement them. Including handshake, data propagation to replicas.
+- How to implement client-server (master-replicas) communication using TCP sockets and redis protocol.
+- How to write tests for the server and client, testing the server using the client.
+- How to use `bufio` package to read and write data from and to the TCP connection.
+- Intricate details of TCP communication, how it does not guarantee the order of the data, doesn't have a concept of message boundaries (you have to define them yourself - basically make your own protocol on top of TCP).
+- How to debug really complex cases of data races in concurrent code involving multiple servers and clients running in parallel.
+- My [mcache](http://github.com/parMaster/mcache) package turned out to be very useful for this challenge.
+- That CodeCrafters challenges are really fun and challenging to work on, provides just right amount of guidance and freedom to explore and learn new things, perfect gradient of difficulty for me. A bit expensive though, but this one was free this month.
